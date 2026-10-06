@@ -48,7 +48,7 @@ export async function apiRequest(path, { method = "GET", body } = {}) {
     });
   } catch {
     throw new Error(
-      "Unable to connect to the server. Make sure the backend is running on port 5000."
+      "Unable to reach the server. Check your connection and try again."
     );
   }
 

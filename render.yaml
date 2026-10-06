@@ -1,0 +1,50 @@
+# Render Blueprint: one web service that runs the backend and serves the
+# built frontend on the same HTTPS address. See DEPLOYMENT.md.
+services:
+  - type: web
+    name: slack-ai-workspace
+    runtime: node
+    plan: free
+    buildCommand: >-
+      cd frontend/my-react-app && npm ci && npm run build &&
+      cd ../../backend/ai-chat-backend && npm ci --omit=dev
+    startCommand: cd backend/ai-chat-backend && npm start
+    healthCheckPath: /api
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: TRUST_PROXY
+        value: "1"
+      # Your Render address, e.g. https://slack-ai-workspace.onrender.com
+      - key: FRONTEND_URL
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB
+        value: slack_ai_workspace
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: AI_MODEL
+        value: openrouter/free
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: TURN_URLS
+        sync: false
+      - key: TURN_USERNAME
+        sync: false
+      - key: TURN_CREDENTIAL
+        sync: false
+      - key: SLACK_BOT_TOKEN
+        sync: false
+      - key: SLACK_SIGNING_SECRET
+        sync: false
+      - key: SLACK_APP_TOKEN
+        sync: false

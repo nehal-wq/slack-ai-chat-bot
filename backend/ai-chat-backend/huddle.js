@@ -11,6 +11,8 @@ const { WebSocketServer } = require("ws");
 const GENERAL_ROOM = "general";
 const MAX_GENERAL_PARTICIPANTS = 6; // full mesh: every participant connects to every other
 const HEARTBEAT_MS = 15000;
+// Membership is re-checked at most this often per connection (not per message)
+const MEMBER_RECHECK_MS = 10000;
 
 function formatDuration(ms) {
   const totalSeconds = Math.max(1, Math.round(ms / 1000));
@@ -21,9 +23,14 @@ function formatDuration(ms) {
 
 function attachHuddleServer(
   server,
-  { findJoinedMember, memberFromToken, addSystemMessage, addDirectSystemMessage }
+  { findJoinedMember, memberFromToken, addSystemMessage, addDirectSystemMessage, isAllowedOrigin }
 ) {
   const wss = new WebSocketServer({ server, path: "/ws/huddle" });
+
+  // Fire-and-forget writes (call history) must never crash the server
+  function logFailure(error) {
+    console.error("HUDDLE ERROR:", error.message || error);
+  }
 
   // roomId -> { participants: Map<memberId, participant>, startedAt, startedBy, video, answered, declined }
   const rooms = new Map();
@@ -31,7 +38,7 @@ function attachHuddleServer(
   const memberRoom = new Map();
 
   // Who may join a room, and how big it can get
-  function describeRoom(roomId, memberId) {
+  async function describeRoom(roomId, memberId) {
     if (roomId === GENERAL_ROOM) {
       return { kind: "general", max: MAX_GENERAL_PARTICIPANTS };
     }
@@ -40,7 +47,7 @@ function attachHuddleServer(
     const [, a, b] = match;
     if (a >= b || (memberId !== a && memberId !== b)) return null;
     const otherId = memberId === a ? b : a;
-    if (!findJoinedMember(otherId)) return null;
+    if (!(await findJoinedMember(otherId))) return null;
     return { kind: "dm", max: 2, members: [a, b], otherId };
   }
 
@@ -76,7 +83,10 @@ function attachHuddleServer(
   }
 
   function broadcastState() {
-    for (const client of wss.clients) sendState(client);
+    for (const client of wss.clients) {
+      // Only signed-in connections hear about calls
+      if (client.memberId) sendState(client);
+    }
   }
 
   function endRoom(roomId, room) {
@@ -84,7 +94,7 @@ function attachHuddleServer(
     const duration = formatDuration(Date.now() - room.startedAt);
 
     if (roomId === GENERAL_ROOM) {
-      addSystemMessage(`Huddle ended · lasted ${duration}`);
+      addSystemMessage(`Huddle ended · lasted ${duration}`).catch(logFailure);
       return;
     }
 
@@ -94,7 +104,7 @@ function attachHuddleServer(
     if (room.answered) text = `📞 ${kind[0].toUpperCase()}${kind.slice(1)} ended · lasted ${duration}`;
     else if (room.declined) text = `📞 ${room.startedBy}'s ${kind} was declined`;
     else text = `📞 Missed ${kind} from ${room.startedBy}`;
-    addDirectSystemMessage(a, b, text);
+    addDirectSystemMessage(a, b, text).catch(logFailure);
   }
 
   function leave(memberId) {
@@ -106,8 +116,10 @@ function attachHuddleServer(
     broadcastState();
   }
 
-  function handleJoin(socket, member, message) {
+  async function handleJoin(socket, member, message) {
     const roomId = message.room || GENERAL_ROOM;
+    const info = await describeRoom(roomId, member.id);
+
     const currentRoom = memberRoom.get(member.id);
     if (currentRoom) {
       const existing = rooms.get(currentRoom)?.participants.get(member.id);
@@ -123,7 +135,6 @@ function attachHuddleServer(
       return;
     }
 
-    const info = describeRoom(roomId, member.id);
     if (!info) {
       send(socket, { type: "error", error: "You can't join that call." });
       return;
@@ -178,10 +189,10 @@ function attachHuddleServer(
       if (info.kind === "general") {
         addSystemMessage(
           `${member.name} started ${message.video ? "a video" : "an audio"} huddle`
-        );
+        ).catch(logFailure);
         // Ring everyone else who is online
         for (const client of wss.clients) {
-          if (client.memberId !== member.id) send(client, ring);
+          if (client.memberId && client.memberId !== member.id) send(client, ring);
         }
       } else {
         // Ring only the person being called
@@ -194,84 +205,115 @@ function attachHuddleServer(
     broadcastState();
   }
 
-  function handleDecline(member, message) {
+  async function handleDecline(member, message) {
     const roomId = message.room;
+    const info = rooms.has(roomId) && (await describeRoom(roomId, member.id));
     const room = rooms.get(roomId);
-    const info = room && describeRoom(roomId, member.id);
-    if (!info || info.kind !== "dm" || room.participants.has(member.id)) return;
+    if (!info || !room || info.kind !== "dm" || room.participants.has(member.id)) return;
     room.declined = true;
     for (const participant of room.participants.values()) {
       send(participant.socket, { type: "declined", room: roomId, by: member.name });
     }
   }
 
-  wss.on("connection", (socket, req) => {
-    // Browsers can't set headers on WebSockets, so the session token is a query param
-    const token = new URL(req.url, "http://localhost").searchParams.get("token");
-    const member = memberFromToken(token);
-    if (!member) {
+  // The member behind a socket, re-checked against the database now and then
+  // (people can be removed from the workspace mid-session)
+  async function currentMember(socket) {
+    if (Date.now() - socket.memberCheckedAt > MEMBER_RECHECK_MS) {
+      socket.member = await findJoinedMember(socket.memberId);
+      socket.memberCheckedAt = Date.now();
+    }
+    return socket.member;
+  }
+
+  async function handleMessage(socket, raw) {
+    let message;
+    try {
+      message = JSON.parse(raw);
+    } catch {
+      return;
+    }
+
+    const current = await currentMember(socket);
+    if (!current) {
       socket.close(4001, "Not a member of #general");
       return;
     }
 
+    const roomId = memberRoom.get(current.id);
+    const self = roomId && rooms.get(roomId)?.participants.get(current.id);
+    const isSelf = self && self.socket === socket;
+
+    switch (message.type) {
+      case "join":
+        await handleJoin(socket, current, message);
+        break;
+      case "leave":
+        if (isSelf) leave(current.id);
+        break;
+      case "decline":
+        await handleDecline(current, message);
+        break;
+      case "media":
+        if (isSelf) {
+          self.audio = Boolean(message.audio);
+          self.video = Boolean(message.video);
+          broadcastState();
+        }
+        break;
+      case "signal": {
+        // Only relay between people in the same call
+        const target = rooms.get(roomId)?.participants.get(message.to);
+        if (isSelf && target) {
+          send(target.socket, { type: "signal", from: current.id, data: message.data });
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  async function authenticate(socket, req) {
+    // Only pages served from our own frontend may open call connections
+    if (!isAllowedOrigin(req.headers.origin)) {
+      socket.close(4003, "Origin not allowed");
+      return false;
+    }
+    // Browsers can't set headers on WebSockets, so the session token is a query param
+    const token = new URL(req.url, "http://localhost").searchParams.get("token");
+    const member = await memberFromToken(token);
+    if (!member) {
+      socket.close(4001, "Not a member of #general");
+      return false;
+    }
     socket.memberId = member.id;
+    socket.member = member;
+    socket.memberCheckedAt = Date.now();
+    sendState(socket);
+    return true;
+  }
+
+  wss.on("connection", (socket, req) => {
     socket.isAlive = true;
     socket.on("pong", () => {
       socket.isAlive = true;
     });
 
-    sendState(socket);
-
+    // Messages are queued behind authentication and handled one at a time,
+    // so call setup (offer, answer, ICE candidates) is never reordered
+    let queue = authenticate(socket, req);
     socket.on("message", (raw) => {
-      let message;
-      try {
-        message = JSON.parse(raw);
-      } catch {
-        return;
-      }
-
-      // Re-check membership: people can be removed from #general mid-session
-      const current = findJoinedMember(socket.memberId);
-      if (!current) {
-        socket.close(4001, "Not a member of #general");
-        return;
-      }
-
-      const roomId = memberRoom.get(current.id);
-      const self = roomId && rooms.get(roomId)?.participants.get(current.id);
-      const isSelf = self && self.socket === socket;
-
-      switch (message.type) {
-        case "join":
-          handleJoin(socket, current, message);
-          break;
-        case "leave":
-          if (isSelf) leave(current.id);
-          break;
-        case "decline":
-          handleDecline(current, message);
-          break;
-        case "media":
-          if (isSelf) {
-            self.audio = Boolean(message.audio);
-            self.video = Boolean(message.video);
-            broadcastState();
-          }
-          break;
-        case "signal": {
-          // Only relay between people in the same call
-          const target = rooms.get(roomId)?.participants.get(message.to);
-          if (isSelf && target) {
-            send(target.socket, { type: "signal", from: current.id, data: message.data });
-          }
-          break;
-        }
-        default:
-          break;
-      }
+      queue = queue
+        .then((ok) => (ok ? handleMessage(socket, raw).then(() => true) : false))
+        .catch((error) => {
+          logFailure(error);
+          return Boolean(socket.memberId);
+        });
     });
 
     socket.on("close", () => {
+      if (!socket.memberId) return;
       const roomId = memberRoom.get(socket.memberId);
       if (rooms.get(roomId)?.participants.get(socket.memberId)?.socket === socket) {
         leave(socket.memberId);

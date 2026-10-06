@@ -5,6 +5,7 @@ import { useDispatch, useSelector } from "react-redux";
 import {
   fetchInvite,
   requestLogin,
+  pollLogin,
   acceptInvite,
   fetchGeneral
 } from "../../features/general/generalSlice";
@@ -18,6 +19,9 @@ const panelStyle = {
   boxShadow: "0 2px 6px rgba(0,0,0,0.06)"
 };
 
+const LOGIN_POLL_MS = 2000;
+const LINK_LIFETIME_MS = 15 * 60 * 1000;
+
 const greenButtonStyle = {
   background: "#007A5A",
   borderColor: "#007A5A",
@@ -30,6 +34,26 @@ function JoinPanel({ inviteToken, currentMember, sessionExpired, onInviteHandled
   const dispatch = useDispatch();
   const loginError = useSelector((state) => state.general.loginError);
   const [linkSent, setLinkSent] = useState(null);
+
+  // While "Check your email" is showing, sign this page in as soon as the link
+  // is clicked, wherever it was opened. Stops when the link would have expired.
+  const pendingRequestId = linkSent?.requestId;
+  useEffect(() => {
+    if (!pendingRequestId) return undefined;
+    const startedAt = Date.now();
+    const timer = setInterval(async () => {
+      if (Date.now() - startedAt > LINK_LIFETIME_MS) {
+        clearInterval(timer);
+        return;
+      }
+      const result = await dispatch(pollLogin(pendingRequestId));
+      if (result.payload?.sessionToken) {
+        clearInterval(timer);
+        dispatch(fetchGeneral());
+      }
+    }, LOGIN_POLL_MS);
+    return () => clearInterval(timer);
+  }, [dispatch, pendingRequestId]);
   const [invite, setInvite] = useState(null);
   const [inviteError, setInviteError] = useState(null);
   const [loadingInvite, setLoadingInvite] = useState(Boolean(inviteToken));
@@ -137,9 +161,23 @@ function JoinPanel({ inviteToken, currentMember, sessionExpired, onInviteHandled
             </div>
             <div style={{ color: "#616061", fontSize: "13px", margin: "4px 0 10px" }}>
               {linkSent.emailed
-                ? `We sent a sign-in link to ${linkSent.email}. Open it on this device to sign in. It expires in 15 minutes.`
+                ? `We sent a sign-in link to ${linkSent.email}. Click it on any device (this computer or your phone) and this page will sign you in automatically. The link expires in 15 minutes.`
                 : "Email isn't configured on the server, so the sign-in link was printed in the backend server log."}
             </div>
+            {linkSent.emailed && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  fontSize: "12px",
+                  color: "#616061",
+                  marginBottom: "10px"
+                }}
+              >
+                <Spin size="small" /> Waiting for you to click the link…
+              </div>
+            )}
             <Button size="small" onClick={() => setLinkSent(null)}>
               Use a different email
             </Button>

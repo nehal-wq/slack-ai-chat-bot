@@ -138,7 +138,7 @@ function App() {
     const textToSend = typeof customText === "string" ? customText : input;
 
     // Prevent empty sends or sends while loading
-    if (!textToSend || textToSend.trim() === "" || loading) {
+    if (!textToSend || textToSend.trim() === "" || loading || !currentMemberId) {
       return;
     }
 
@@ -747,53 +747,71 @@ function App() {
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* Slack-style Message Composer */}
-              <div
-                style={{
-                  marginTop: "16px",
-                  padding: "12px",
-                  background: "#FFFFFF",
-                  border: "1px solid #D0D0D0",
-                  borderRadius: "10px",
-                  boxShadow: "0 2px 6px rgba(0,0,0,0.06)",
-                  display: "flex",
-                  gap: "12px",
-                  alignItems: "center"
-                }}
-              >
-                <Input
-                  variant="borderless"
-                  placeholder={
-                    loading
-                      ? "AI is thinking..."
-                      : "Message #ai-assistant... (Press Enter to send)"
+              {/* The assistant is for signed-in members (it spends AI credit) */}
+              {!currentMemberId && (
+                <Alert
+                  type="info"
+                  showIcon
+                  style={{ marginTop: "16px" }}
+                  title="Sign in to use the AI assistant"
+                  description="The assistant is available to workspace members. Sign in with your email in #general, then come back here."
+                  action={
+                    <Button size="small" onClick={() => setActiveChannel("general")}>
+                      Go to #general
+                    </Button>
                   }
-                  value={input}
-                  disabled={loading}
-                  onChange={(e) => setInput(e.target.value)}
-                  onPressEnter={() => handleSend()}
-                  style={{
-                    fontSize: "14px",
-                    flex: 1
-                  }}
                 />
+              )}
 
-                <Button
-                  type="primary"
-                  icon={<SendOutlined />}
-                  onClick={() => handleSend()}
-                  loading={loading}
-                  disabled={loading || input.trim() === ""}
+              {/* Slack-style Message Composer */}
+              {currentMemberId && (
+                <div
                   style={{
-                    background: "#007A5A",
-                    borderColor: "#007A5A",
-                    fontWeight: 600,
-                    borderRadius: "6px"
+                    marginTop: "16px",
+                    padding: "12px",
+                    background: "#FFFFFF",
+                    border: "1px solid #D0D0D0",
+                    borderRadius: "10px",
+                    boxShadow: "0 2px 6px rgba(0,0,0,0.06)",
+                    display: "flex",
+                    gap: "12px",
+                    alignItems: "center"
                   }}
                 >
-                  Send
-                </Button>
-              </div>
+                  <Input
+                    variant="borderless"
+                    placeholder={
+                      loading
+                        ? "AI is thinking..."
+                        : "Message #ai-assistant... (Press Enter to send)"
+                    }
+                    value={input}
+                    disabled={loading}
+                    onChange={(e) => setInput(e.target.value)}
+                    onPressEnter={() => handleSend()}
+                    style={{
+                      fontSize: "14px",
+                      flex: 1
+                    }}
+                  />
+
+                  <Button
+                    type="primary"
+                    icon={<SendOutlined />}
+                    onClick={() => handleSend()}
+                    loading={loading}
+                    disabled={loading || input.trim() === ""}
+                    style={{
+                      background: "#007A5A",
+                      borderColor: "#007A5A",
+                      fontWeight: 600,
+                      borderRadius: "6px"
+                    }}
+                  >
+                    Send
+                  </Button>
+                </div>
+              )}
             </>
           )}
         </Content>

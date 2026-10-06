@@ -36,6 +36,14 @@ export const verifyLogin = apiThunk("verifyLogin", async (token) => {
   return data;
 });
 
+// The page that asked for a link checks whether it was clicked anywhere
+// (another browser, a phone) and collects its own session when it was
+export const pollLogin = apiThunk("pollLogin", async (requestId) => {
+  const data = await apiRequest("/auth/poll", { method: "POST", body: { requestId } });
+  if (data.sessionToken) setSessionToken(data.sessionToken);
+  return data;
+});
+
 export const signOut = createAsyncThunk("general/signOut", async () => {
   await apiRequest("/auth/logout", { method: "POST" }).catch(() => {});
   setSessionToken(null);
@@ -138,6 +146,9 @@ const generalSlice = createSlice({
       })
       .addCase(verifyLogin.fulfilled, (state, action) => {
         signIn(state, action.payload.member);
+      })
+      .addCase(pollLogin.fulfilled, (state, action) => {
+        if (action.payload.member) signIn(state, action.payload.member);
       })
       .addCase(verifyLogin.rejected, (state, action) => {
         state.loginError = action.payload;

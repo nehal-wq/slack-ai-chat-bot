@@ -2,7 +2,7 @@ import {
   createSlice,
   createAsyncThunk
 } from "@reduxjs/toolkit";
-import { API_BASE } from "../../config";
+import { apiRequest } from "../auth/session";
 
 const initialState = {
   messages: [],
@@ -10,32 +10,15 @@ const initialState = {
   error: null
 };
 
+// The AI assistant is for signed-in members (it spends OpenRouter credit),
+// so requests carry the session like every other API call
 export const sendMessage = createAsyncThunk(
   "chat/sendMessage",
   async ({ message, history }, { rejectWithValue }) => {
     try {
-      const response = await fetch(`${API_BASE}/chat`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          message: message,
-          history: history
-        })
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        return rejectWithValue(data.error || "Failed to get AI response");
-      }
-
-      return data;
-    } catch {
-      return rejectWithValue(
-        "Unable to connect to the AI server. Make sure the backend is running on port 5000."
-      );
+      return await apiRequest("/chat", { method: "POST", body: { message, history } });
+    } catch (err) {
+      return rejectWithValue(err.message || "Failed to get AI response");
     }
   }
 );

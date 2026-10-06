@@ -3,6 +3,8 @@ require("dotenv").config();
 const express = require("express");
 const OpenAI = require("openai");
 const cors = require("cors");
+const helmet = require("helmet");
+const { rateLimit } = require("express-rate-limit");
 const { App: SlackApp } = require("@slack/bolt");
 const {
   createGeneralRouter,
@@ -19,6 +21,10 @@ const { createAuth } = require("./auth");
 const { createDirectRouter, addDirectSystemMessage } = require("./direct");
 const { attachHuddleServer } = require("./huddle");
 const { verifyMailer } = require("./mailer");
+const { connectDb } = require("./db");
+const config = require("./config");
+const fs = require("fs");
+const path = require("path");
 
 // Validate environment variables
 const requiredEnvVars = [
@@ -33,7 +39,7 @@ if (missingVars.length > 0) {
 }
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = config.PORT;
 const AI_MODEL = process.env.AI_MODEL || "openrouter/free";
 
 const openai = new OpenAI({
@@ -48,8 +54,41 @@ const slackApp = new SlackApp({
   appToken: process.env.SLACK_APP_TOKEN
 });
 
-app.use(cors());
-app.use(express.json());
+// --- Security ---
+app.set("trust proxy", config.TRUST_PROXY);
+app.use(helmet());
+// Only our own frontend may call the API from a browser
+app.use(
+  cors({
+    origin: (origin, callback) => callback(null, config.isAllowedOrigin(origin))
+  })
+);
+app.use(express.json({ limit: "100kb" }));
+
+const limit = (windowMinutes, max, message) =>
+  rateLimit({
+    windowMs: windowMinutes * 60 * 1000,
+    limit: max,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    message: { error: message }
+  });
+// Generous overall cap (pages poll every few seconds; offices share one IP)
+app.use("/api", limit(5, 2000, "Too many requests. Please slow down."));
+// Tight caps on endpoints that send email or spend AI credit
+app.use("/api/auth/request", limit(15, 10, "Too many sign-in requests. Try again later."));
+app.use("/api/chat", limit(1, 30, "Too many AI requests. Wait a minute and try again."));
+
+// Passwordless sign-in (emailed one-time links) and sessions
+const auth = createAuth({
+  findJoinedMember,
+  findMemberByEmail,
+  activateMember,
+  createOwner,
+  hasOwner,
+  publicMember
+});
+app.use("/api/auth", auth.router);
 
 // In-memory conversation history per Slack channel
 const MAX_HISTORY_LENGTH = 15;
@@ -78,8 +117,8 @@ app.get("/api", (req, res) => {
   });
 });
 
-// Web chat endpoint
-app.post("/api/chat", async (req, res) => {
+// Web chat endpoint (signed-in members only: it spends OpenRouter credit)
+app.post("/api/chat", auth.requireMember, async (req, res) => {
   try {
     const { message, history = [] } = req.body;
 
@@ -118,16 +157,10 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
-// Passwordless sign-in (emailed one-time links) and sessions
-const auth = createAuth({
-  findJoinedMember,
-  findMemberByEmail,
-  activateMember,
-  createOwner,
-  hasOwner,
-  publicMember
+// STUN/TURN servers for calls (TURN credentials stay out of the frontend build)
+app.get("/api/calls/ice-servers", auth.requireMember, (req, res) => {
+  res.json({ iceServers: config.iceServers() });
 });
-app.use("/api/auth", auth.router);
 
 // #general team channel (members, email invites, messages)
 app.use(
@@ -148,6 +181,27 @@ app.use(
     requireMember: auth.requireMember
   })
 );
+
+// Unknown API routes and unexpected errors return JSON, never a stack trace
+app.use("/api", (req, res) => {
+  res.status(404).json({ error: "Not found." });
+});
+
+// In production the backend also serves the built frontend, so the whole app
+// lives on one HTTPS address (no cross-site requests, same-origin WebSockets)
+if (fs.existsSync(path.join(config.FRONTEND_DIST, "index.html"))) {
+  app.use(express.static(config.FRONTEND_DIST, { index: false }));
+  // Any other page path is a frontend route (e.g. /?invite=… or /?login=…)
+  app.get(/^\/(?!api\/|ws\/).*/, (req, res) => {
+    res.sendFile(path.join(config.FRONTEND_DIST, "index.html"));
+  });
+  console.log(`Serving frontend from ${config.FRONTEND_DIST}`);
+}
+// eslint-disable-next-line no-unused-vars -- Express needs all four arguments
+app.use((error, req, res, next) => {
+  console.error("API ERROR:", error.message || error);
+  res.status(500).json({ error: "Something went wrong on the server. Please try again." });
+});
 
 // Slack Bot App Mention Handler
 slackApp.event("app_mention", async ({ event, say }) => {
@@ -207,19 +261,34 @@ slackApp.event("app_mention", async ({ event, say }) => {
   }
 });
 
-// Start Express Server
-const server = app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  verifyMailer();
-});
+// Start: connect to MongoDB first, then accept requests
+async function startServer() {
+  try {
+    await connectDb();
+    console.log("MongoDB connected");
+  } catch (error) {
+    console.error("MONGODB CONNECTION ERROR:", error.message || error);
+    console.error("  Check MONGODB_URI in .env and that MongoDB is running.");
+    process.exit(1);
+  }
 
-// Huddle and direct-call signaling over WebSocket (ws://localhost:PORT/ws/huddle)
-attachHuddleServer(server, {
-  findJoinedMember,
-  memberFromToken: auth.memberFromToken,
-  addSystemMessage,
-  addDirectSystemMessage
-});
+  const server = app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Allowed frontend origins: ${config.allowedOrigins.join(", ")}`);
+    verifyMailer();
+  });
+
+  // Huddle and direct-call signaling over WebSocket (ws://localhost:PORT/ws/huddle)
+  attachHuddleServer(server, {
+    findJoinedMember,
+    memberFromToken: auth.memberFromToken,
+    addSystemMessage,
+    addDirectSystemMessage,
+    isAllowedOrigin: config.isAllowedOrigin
+  });
+}
+
+startServer();
 
 // Start Slack Socket Mode Bot
 (async () => {

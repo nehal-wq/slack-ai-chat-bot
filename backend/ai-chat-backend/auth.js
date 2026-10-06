@@ -1,34 +1,23 @@
 const express = require("express");
 const crypto = require("crypto");
-const fs = require("fs");
-const path = require("path");
 const { mailer, sendMail } = require("./mailer");
+const { collections } = require("./db");
 
 // Passwordless sign-in: a one-time link is emailed, and clicking it creates a
 // session. Only SHA-256 hashes of tokens are stored, never the tokens.
+//
+// Sessions don't expire: you stay signed in until you sign out or the owner
+// removes you. The browser that asked for the link is signed in too, even if
+// the link is opened somewhere else (another browser, a phone), by polling.
+//
+// MongoDB collections: loginTokens (TTL), loginApprovals (TTL), sessions.
 
-const DATA_FILE = path.join(__dirname, "data", "auth.json");
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+const { FRONTEND_URL } = require("./config");
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const LOGIN_LINK_TTL_MS = 15 * 60 * 1000;
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const REQUEST_COOLDOWN_MS = 30 * 1000;
 
-function loadState() {
-  try {
-    return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-  } catch {
-    return { loginTokens: {}, sessions: {} };
-  }
-}
-
-const state = loadState();
 const lastRequestAt = new Map(); // email -> timestamp, to stop link spamming
-
-function saveState() {
-  fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
-  fs.writeFileSync(DATA_FILE, JSON.stringify(state, null, 2));
-}
 
 function hash(token) {
   return crypto.createHash("sha256").update(token).digest("hex");
@@ -36,15 +25,6 @@ function hash(token) {
 
 function newToken() {
   return crypto.randomBytes(32).toString("hex");
-}
-
-function pruneExpired() {
-  const now = Date.now();
-  for (const store of [state.loginTokens, state.sessions]) {
-    for (const [key, entry] of Object.entries(store)) {
-      if (entry.expiresAt < now) delete store[key];
-    }
-  }
 }
 
 function escapeHtml(text) {
@@ -64,29 +44,27 @@ function createAuth({
   hasOwner,
   publicMember
 }) {
-  function createSession(memberId) {
-    pruneExpired();
+  async function createSession(memberId) {
     const token = newToken();
-    state.sessions[hash(token)] = {
+    await collections.sessions().insertOne({
+      _id: hash(token),
       memberId,
-      createdAt: Date.now(),
-      expiresAt: Date.now() + SESSION_TTL_MS
-    };
-    saveState();
+      createdAt: new Date()
+    });
     return token;
   }
 
-  // Signed-in member for a session token, or null (expired, removed, unknown)
-  function memberFromToken(token) {
-    if (!token) return null;
-    const session = state.sessions[hash(token)];
-    if (!session || session.expiresAt < Date.now()) return null;
+  // Signed-in member for a session token, or null (signed out, removed, unknown)
+  async function memberFromToken(token) {
+    if (typeof token !== "string" || !token) return null;
+    const session = await collections.sessions().findOne({ _id: hash(token) });
+    if (!session) return null;
     return findJoinedMember(session.memberId);
   }
 
   // Express middleware: rejects requests without a valid session
-  function requireMember(req, res, next) {
-    const member = memberFromToken(bearerToken(req));
+  async function requireMember(req, res, next) {
+    const member = await memberFromToken(bearerToken(req));
     if (!member) {
       return res.status(401).json({ error: "Your session has expired. Please sign in again." });
     }
@@ -122,8 +100,8 @@ function createAuth({
       return res.status(400).json({ error: "A valid email address is required." });
     }
 
-    const member = findMemberByEmail(email);
-    const isNewWorkspace = !member && !hasOwner();
+    const member = await findMemberByEmail(email);
+    const isNewWorkspace = !member && !(await hasOwner());
     if (!member && !isNewWorkspace) {
       return res.status(403).json({
         error: "This workspace is invite-only. Ask a member to invite you, then use the link in your invite email."
@@ -136,18 +114,19 @@ function createAuth({
     }
     lastRequestAt.set(email, Date.now());
 
-    pruneExpired();
     const token = newToken();
-    state.loginTokens[hash(token)] = {
+    const requestId = newToken();
+    await collections.loginTokens().insertOne({
+      _id: hash(token),
       email,
       name: typeof req.body.name === "string" ? req.body.name.trim().slice(0, 60) : "",
-      expiresAt: Date.now() + LOGIN_LINK_TTL_MS
-    };
-    saveState();
+      requestHash: hash(requestId),
+      expiresAt: new Date(Date.now() + LOGIN_LINK_TTL_MS)
+    });
 
     try {
       const emailed = await sendLoginLink(email, `${FRONTEND_URL}/?login=${token}`, isNewWorkspace);
-      res.json({ emailed, email });
+      res.json({ emailed, email, requestId });
     } catch (error) {
       console.error("LOGIN EMAIL ERROR:", error.message || error);
       res.status(502).json({ error: "We couldn't send the sign-in email. Please try again." });
@@ -155,38 +134,56 @@ function createAuth({
   });
 
   // Step 2: the link was clicked; exchange it for a session
-  router.post("/verify", (req, res) => {
+  router.post("/verify", async (req, res) => {
     const token = typeof req.body.token === "string" ? req.body.token : "";
-    const key = hash(token);
-    const entry = state.loginTokens[key];
-    if (!entry || entry.expiresAt < Date.now()) {
+    // Atomically claim the link so it can only ever be used once
+    const entry = await collections.loginTokens().findOneAndDelete({ _id: hash(token) });
+    if (!entry || entry.expiresAt < new Date()) {
       return res.status(400).json({ error: "This sign-in link is invalid or has expired. Request a new one." });
     }
-    delete state.loginTokens[key]; // single use
-    saveState();
 
-    let member = findMemberByEmail(entry.email);
+    let member = await findMemberByEmail(entry.email);
     if (member && member.status === "invited") {
-      member = activateMember(member, entry.name);
+      member = await activateMember(member, entry.name);
     } else if (!member) {
-      if (hasOwner()) {
+      if (await hasOwner()) {
         return res.status(403).json({ error: "This workspace is invite-only." });
       }
-      member = createOwner(entry.email, entry.name);
+      member = await createOwner(entry.email, entry.name);
     }
 
-    res.json({ member: publicMember(member), sessionToken: createSession(member.id) });
+    if (entry.requestHash) {
+      await collections.loginApprovals().updateOne(
+        { _id: entry.requestHash },
+        { $set: { memberId: member.id, expiresAt: new Date(Date.now() + LOGIN_LINK_TTL_MS) } },
+        { upsert: true }
+      );
+    }
+
+    res.json({ member: publicMember(member), sessionToken: await createSession(member.id) });
+  });
+
+  // Step 2b: the requesting browser asks "has my link been clicked yet?"
+  router.post("/poll", async (req, res) => {
+    const requestId = typeof req.body.requestId === "string" ? req.body.requestId : "";
+    // Hand a session over at most once
+    const approval = await collections.loginApprovals().findOneAndDelete({ _id: hash(requestId) });
+    if (!approval || approval.expiresAt < new Date()) {
+      return res.json({ pending: true });
+    }
+    const member = await findJoinedMember(approval.memberId);
+    if (!member) return res.json({ pending: true });
+    res.json({ member: publicMember(member), sessionToken: await createSession(member.id) });
   });
 
   router.get("/me", requireMember, (req, res) => {
     res.json({ member: publicMember(req.member) });
   });
 
-  router.post("/logout", (req, res) => {
+  router.post("/logout", async (req, res) => {
     const token = bearerToken(req);
     if (token) {
-      delete state.sessions[hash(token)];
-      saveState();
+      await collections.sessions().deleteOne({ _id: hash(token) });
     }
     res.json({ ok: true });
   });

@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { WS_BASE } from "../../config";
-import { getSessionToken } from "../auth/session";
+import { getSessionToken, apiRequest } from "../auth/session";
 
 // Peer-to-peer audio/video calls: #general huddles and 1:1 direct calls.
 // The backend relays signaling messages over a WebSocket; media goes
 // directly between browsers via WebRTC.
 
-const ICE_SERVERS = [
+// Used if the backend can't be asked (it adds TURN servers when configured)
+const DEFAULT_ICE_SERVERS = [
   { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }
 ];
 const VIDEO_CONSTRAINTS = { width: { ideal: 640 }, height: { ideal: 360 } };
@@ -76,6 +77,7 @@ function useHuddle(memberId) {
   const inCallRef = useRef(false);
   const activeRoomRef = useRef(null);
   const joinAckedRef = useRef(false);
+  const iceServersRef = useRef(DEFAULT_ICE_SERVERS);
   const handleMessageRef = useRef(null);
 
   const send = useCallback((message) => {
@@ -106,7 +108,7 @@ function useHuddle(memberId) {
 
   const createPeer = useCallback(
     (id) => {
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      const pc = new RTCPeerConnection({ iceServers: iceServersRef.current });
       const entry = { pc, pendingCandidates: [], stream: new MediaStream() };
       peersRef.current.set(id, entry);
 
@@ -320,7 +322,11 @@ function useHuddle(memberId) {
 
       setJoining(true);
       setNotice(null);
-      const { stream, notes } = await getLocalMedia(withVideo);
+      const [{ stream, notes }, ice] = await Promise.all([
+        getLocalMedia(withVideo),
+        apiRequest("/calls/ice-servers").catch(() => null)
+      ]);
+      iceServersRef.current = ice?.iceServers || DEFAULT_ICE_SERVERS;
       const hasAudio = stream.getAudioTracks().length > 0;
       const hasVideo = stream.getVideoTracks().length > 0;
 
