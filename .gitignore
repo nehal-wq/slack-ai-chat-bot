@@ -5,6 +5,9 @@ node_modules/
 .env
 .env.*
 
+# Local app data (#general members and messages)
+backend/ai-chat-backend/data/
+
 # Build files
 dist/
 dist-ssr/
