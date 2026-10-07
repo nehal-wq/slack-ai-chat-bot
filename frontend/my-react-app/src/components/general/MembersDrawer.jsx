@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Drawer, Button, Popconfirm, Tag, Alert, Tooltip } from "antd";
 import { UserAddOutlined, LogoutOutlined, CrownFilled } from "@ant-design/icons";
-import { useDispatch } from "react-redux";
+import { useDispatch, useSelector } from "react-redux";
 import {
   removeMember,
   makeOwner,
@@ -16,7 +16,7 @@ const sectionTitleStyle = {
   fontWeight: 600,
   textTransform: "uppercase",
   letterSpacing: "0.5px",
-  color: "#868686",
+  color: "var(--text-tertiary)",
   margin: "4px 0 8px"
 };
 
@@ -32,6 +32,7 @@ function MemberRow({ member, currentMember, onRemove, onMakeOwner }) {
   const isYou = member.id === currentMember?.id;
   const isPending = member.status === "invited";
   const isOwner = member.role === "owner";
+  const isOnline = useSelector((state) => state.general.online.includes(member.id));
   const canTransfer =
     currentMember?.role === "owner" && !isYou && !isPending;
 
@@ -54,10 +55,14 @@ function MemberRow({ member, currentMember, onRemove, onMakeOwner }) {
         padding: "8px 0"
       }}
     >
-      <MemberAvatar member={member} size={36} />
+      <MemberAvatar
+        member={member}
+        size={36}
+        online={isPending ? undefined : isOnline}
+      />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <span style={{ fontWeight: 600, color: "#1D1C1D" }}>{member.name}</span>
+          <span style={{ fontWeight: 600, color: "var(--text)" }}>{member.name}</span>
           {isOwner && (
             <Tag color="gold" icon={<CrownFilled />}>
               Owner
@@ -69,7 +74,7 @@ function MemberRow({ member, currentMember, onRemove, onMakeOwner }) {
         <div
           style={{
             fontSize: "12px",
-            color: "#868686",
+            color: "var(--text-tertiary)",
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap"
@@ -179,8 +184,8 @@ function MembersDrawer({ open, onClose, members, currentMember, canInvite, onInv
             padding: "12px",
             marginBottom: "16px",
             borderRadius: "8px",
-            background: "#F8F8F8",
-            border: "1px solid #E2E2E2"
+            background: "var(--surface-subtle)",
+            border: "1px solid var(--border)"
           }}
         >
           <InvitePermissionSetting currentMember={currentMember} />
@@ -189,7 +194,7 @@ function MembersDrawer({ open, onClose, members, currentMember, canInvite, onInv
 
       <div style={sectionTitleStyle}>In this channel — {joined.length}</div>
       {joined.length === 0 && (
-        <div style={{ color: "#868686", fontSize: "13px" }}>No one has joined yet.</div>
+        <div style={{ color: "var(--text-tertiary)", fontSize: "13px" }}>No one has joined yet.</div>
       )}
       {joined.map((member) => (
         <MemberRow

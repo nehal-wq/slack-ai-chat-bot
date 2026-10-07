@@ -10,7 +10,8 @@ import {
   Tag,
   Tooltip,
   Popconfirm,
-  Badge
+  Badge,
+  Grid
 } from "antd";
 import {
   SendOutlined,
@@ -22,7 +23,9 @@ import {
   SettingOutlined,
   CheckCircleFilled,
   CustomerServiceOutlined,
-  PhoneOutlined
+  PhoneOutlined,
+  SunOutlined,
+  MoonOutlined
 } from "@ant-design/icons";
 import { useSelector, useDispatch } from "react-redux";
 import {
@@ -38,10 +41,18 @@ import DirectChannel from "./components/DirectChannel";
 import MemberAvatar from "./components/general/MemberAvatar";
 import { fetchConversations } from "./features/direct/directSlice";
 import { fetchMe, verifyLogin } from "./features/general/generalSlice";
+import { useTheme } from "./theme/themeContext";
+import useRealtimeSync from "./features/realtime/useRealtimeSync";
 
 const { Header, Sider, Content } = Layout;
 
-const DIRECT_POLL_INTERVAL_MS = 4000;
+// Messages arrive instantly over the realtime connection; this slow poll is
+// only a safety net in case a pushed event is ever missed
+const DIRECT_POLL_INTERVAL_MS = 30000;
+// Below Ant Design's "md" breakpoint (768px) the sidebar collapses
+const MOBILE_MAX_WIDTH = 767;
+// Above the floating call panel (1000) so the open sidebar is never covered
+const SIDEBAR_Z_INDEX = 1100;
 const AUTH_RETRY_MS = 3000;
 
 const CHANNELS = [
@@ -83,7 +94,15 @@ function App() {
   const [activeChannel, setActiveChannel] = useState(
     inviteToken || loginToken ? "general" : "chat"
   );
-  const [siderCollapsed, setSiderCollapsed] = useState(false);
+  // Start collapsed on small screens so the first frame never renders the
+  // 240px sidebar (phones would zoom out to fit it and stay zoomed out)
+  const [siderCollapsed, setSiderCollapsed] = useState(
+    () => window.matchMedia?.(`(max-width: ${MOBILE_MAX_WIDTH}px)`).matches ?? false
+  );
+  const { resolved: resolvedTheme, setMode: setThemeMode } = useTheme();
+  // Phones and small tablets: tighter spacing, icon-only buttons
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens.md;
   const messages = useSelector((state) => state.chat.messages);
   const loading = useSelector((state) => state.chat.loading);
   const error = useSelector((state) => state.chat.error);
@@ -191,6 +210,22 @@ function App() {
     return () => clearInterval(timer);
   }, [dispatch, loginToken, hasSession, authChecked]);
 
+  // Picking a channel on a phone closes the sidebar, like Slack's mobile app
+  function openChannel(key) {
+    setActiveChannel(key);
+    if (isMobile) setSiderCollapsed(true);
+  }
+
+  // Pushed messages, presence, unread counts, tab title, desktop notifications
+  const onlineIds = useSelector((state) => state.general.online);
+  const unseenGeneral = useSelector((state) => state.general.unseenCount);
+  useRealtimeSync({
+    currentMemberId,
+    myName: directMe?.name,
+    activeChannel,
+    openChannel
+  });
+
   function handleInviteHandled() {
     setInviteToken(null);
     window.history.replaceState(null, "", window.location.pathname);
@@ -202,16 +237,38 @@ function App() {
 
   return (
     <Layout style={{ minHeight: "100vh" }}>
-      {/* Slack Aubergine Sidebar */}
+      {/* Phones: dim the page behind the open sidebar; tapping it closes */}
+      {isMobile && !siderCollapsed && (
+        <div
+          aria-hidden="true"
+          onClick={() => setSiderCollapsed(true)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0, 0, 0, 0.45)",
+            zIndex: SIDEBAR_Z_INDEX - 1
+          }}
+        />
+      )}
+
+      {/* Slack Aubergine Sidebar (slides over the page on phones) */}
       <Sider
         width={240}
         breakpoint="md"
         collapsedWidth={0}
+        collapsed={siderCollapsed}
         onCollapse={setSiderCollapsed}
         zeroWidthTriggerStyle={{ top: 12 }}
         style={{
-          background: "#3F0E40",
-          borderRight: "1px solid rgba(255, 255, 255, 0.1)"
+          background: "var(--sidebar)",
+          borderRight: "1px solid rgba(255, 255, 255, 0.1)",
+          ...(isMobile && {
+            position: "fixed",
+            top: 0,
+            bottom: 0,
+            left: 0,
+            zIndex: SIDEBAR_Z_INDEX
+          })
         }}
       >
         <div
@@ -296,7 +353,7 @@ function App() {
           theme="dark"
           mode="inline"
           selectedKeys={[activeChannel]}
-          onClick={({ key }) => setActiveChannel(key)}
+          onClick={({ key }) => openChannel(key)}
           style={{
             background: "transparent",
             borderRight: "none"
@@ -305,9 +362,25 @@ function App() {
             key: c.key,
             icon: c.key === "settings" ? <SettingOutlined /> : <NumberOutlined />,
             label:
-              c.key === "general" && huddle.huddle ? (
-                <span title="Huddle in progress">
-                  {c.label} <CustomerServiceOutlined style={{ color: "#2BAC76" }} />
+              c.key === "general" ? (
+                <span
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: "6px"
+                  }}
+                >
+                  <span style={{ fontWeight: unseenGeneral ? 700 : undefined }}>{c.label}</span>
+                  <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                    {huddle.huddle && (
+                      <CustomerServiceOutlined
+                        style={{ color: "#2BAC76" }}
+                        title="Huddle in progress"
+                      />
+                    )}
+                    {unseenGeneral > 0 && <Badge count={unseenGeneral} size="small" />}
+                  </span>
                 </span>
               ) : (
                 c.label
@@ -333,7 +406,7 @@ function App() {
             theme="dark"
             mode="inline"
             selectedKeys={[activeChannel]}
-            onClick={({ key }) => setActiveChannel(key)}
+            onClick={({ key }) => openChannel(key)}
             style={{
               background: "transparent",
               borderRight: "none"
@@ -342,7 +415,9 @@ function App() {
               const inCallWith = Boolean(huddle.rooms[directRoomId(directMe.id, member.id)]);
               return {
                 key: `dm:${member.id}`,
-                icon: <MemberAvatar member={member} size={20} />,
+                icon: (
+                  <MemberAvatar member={member} size={20} online={onlineIds.includes(member.id)} />
+                ),
                 label: (
                   <span
                     style={{
@@ -390,14 +465,16 @@ function App() {
       </Sider>
 
       {/* Main Chat Layout */}
-      <Layout style={{ background: "#F8F8F8" }}>
+      <Layout style={{ background: "var(--app-bg)" }}>
         {/* Channel Top Header */}
         <Header
           style={{
-            background: "#FFFFFF",
-            borderBottom: "1px solid #E2E2E2",
+            background: "var(--surface)",
+            borderBottom: "1px solid var(--border)",
             // Leave room for the sidebar toggle when the sidebar is collapsed
-            padding: siderCollapsed ? "0 24px 0 60px" : "0 24px",
+            padding: siderCollapsed
+              ? `0 ${isMobile ? 12 : 24}px 0 60px`
+              : "0 24px",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
@@ -416,7 +493,7 @@ function App() {
               style={{
                 fontSize: "18px",
                 fontWeight: 700,
-                color: "#1D1C1D",
+                color: "var(--text)",
                 display: "flex",
                 alignItems: "center",
                 gap: "6px",
@@ -424,13 +501,13 @@ function App() {
               }}
             >
               {channel.key === "settings" && (
-                <SettingOutlined style={{ color: "#616061", fontSize: "16px" }} />
+                <SettingOutlined style={{ color: "var(--text-secondary)", fontSize: "16px" }} />
               )}
               {channel.key === "dm" && channel.member && (
                 <MemberAvatar member={channel.member} size={24} />
               )}
               {channel.key !== "settings" && channel.key !== "dm" && (
-                <NumberOutlined style={{ color: "#616061", fontSize: "16px" }} />
+                <NumberOutlined style={{ color: "var(--text-secondary)", fontSize: "16px" }} />
               )}
               {channel.label}
             </span>
@@ -441,7 +518,7 @@ function App() {
             )}
             <span
               style={{
-                color: "#616061",
+                color: "var(--text-secondary)",
                 fontSize: "13px",
                 whiteSpace: "nowrap",
                 overflow: "hidden",
@@ -452,8 +529,24 @@ function App() {
             </span>
           </div>
 
+          <div
+            style={{
+              flexShrink: 0,
+              marginLeft: "12px",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px"
+            }}
+          >
+            <Tooltip title={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
+              <Button
+                type="text"
+                aria-label="Toggle dark mode"
+                icon={resolvedTheme === "dark" ? <SunOutlined /> : <MoonOutlined />}
+                onClick={() => setThemeMode(resolvedTheme === "dark" ? "light" : "dark")}
+              />
+            </Tooltip>
           {activeChannel === "chat" && (
-            <div style={{ flexShrink: 0, marginLeft: "12px" }}>
               <Popconfirm
                 title="Clear Conversation"
                 description="Are you sure you want to clear all chat messages?"
@@ -467,22 +560,25 @@ function App() {
                     icon={<DeleteOutlined />}
                     danger
                     disabled={messages.length === 0}
+                    aria-label="Clear chat history"
                   >
-                    Clear History
+                    {!isMobile && "Clear History"}
                   </Button>
                 </Tooltip>
               </Popconfirm>
-            </div>
           )}
+          </div>
         </Header>
 
         <Content
           style={{
-            padding: "20px 24px",
+            padding: isMobile ? "12px" : "20px 24px",
             display: "flex",
             flexDirection: "column",
-            height: "calc(100vh - 64px)",
-            boxSizing: "border-box"
+            height: "calc(100dvh - 64px)",
+            boxSizing: "border-box",
+            // Very short windows: scroll inside the channel, never the whole page
+            overflowY: "auto"
           }}
         >
           {activeChannel === "general" && (
@@ -502,7 +598,7 @@ function App() {
                 huddle={huddle}
               />
             ) : (
-              <div style={{ textAlign: "center", color: "#616061", marginTop: "40px" }}>
+              <div style={{ textAlign: "center", color: "var(--text-secondary)", marginTop: "40px" }}>
                 {directMe ? (
                   "This person isn't in the workspace anymore."
                 ) : (
@@ -532,14 +628,14 @@ function App() {
                 {messages.length === 0 && (
                   <div
                     style={{
-                      background: "#FFFFFF",
-                      border: "1px solid #E2E2E2",
+                      background: "var(--surface)",
+                      border: "1px solid var(--border)",
                       borderRadius: "12px",
-                      padding: "32px",
-                      margin: "20px auto",
+                      padding: isMobile ? "20px 16px" : "32px",
+                      margin: isMobile ? "8px auto" : "20px auto",
                       maxWidth: "680px",
                       textAlign: "center",
-                      boxShadow: "0 2px 8px rgba(0,0,0,0.04)"
+                      boxShadow: "var(--shadow-md)"
                     }}
                   >
                     <div
@@ -562,7 +658,7 @@ function App() {
                       style={{
                         fontSize: "20px",
                         fontWeight: 700,
-                        color: "#1D1C1D",
+                        color: "var(--text)",
                         marginBottom: "8px"
                       }}
                     >
@@ -570,7 +666,7 @@ function App() {
                     </h3>
                     <p
                       style={{
-                        color: "#616061",
+                        color: "var(--text-secondary)",
                         fontSize: "14px",
                         marginBottom: "24px"
                       }}
@@ -578,39 +674,17 @@ function App() {
                       Ask questions, draft content, debug code, or brainstorm ideas right inside your workspace.
                     </p>
 
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "1fr 1fr",
-                        gap: "10px",
-                        textAlign: "left"
-                      }}
-                    >
+                    <div className="prompt-grid">
                       {SUGGESTED_PROMPTS.map((prompt, idx) => (
-                        <div
+                        <button
+                          type="button"
                           key={idx}
+                          className="prompt-card"
                           onClick={() => handleSend(prompt.replace(/^[^\s]+\s/, ""))}
-                          style={{
-                            padding: "12px 14px",
-                            background: "#F8F8F8",
-                            border: "1px solid #E2E2E2",
-                            borderRadius: "8px",
-                            cursor: "pointer",
-                            fontSize: "13px",
-                            color: "#1D1C1D",
-                            transition: "all 0.2s ease"
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.borderColor = "#1164A3";
-                            e.currentTarget.style.background = "#F0F7FD";
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.borderColor = "#E2E2E2";
-                            e.currentTarget.style.background = "#F8F8F8";
-                          }}
+                          style={{ textAlign: "left", fontFamily: "inherit" }}
                         >
                           {prompt}
-                        </div>
+                        </button>
                       ))}
                     </div>
                   </div>
@@ -628,10 +702,8 @@ function App() {
                           padding: "12px 16px",
                           marginBottom: "8px",
                           borderRadius: "8px",
-                          background: isUser ? "transparent" : "#FFFFFF",
-                          boxShadow: isUser
-                            ? "none"
-                            : "0 1px 3px rgba(0,0,0,0.05)",
+                          background: isUser ? "transparent" : "var(--surface)",
+                          boxShadow: isUser ? "none" : "var(--shadow-sm)",
                           display: "flex",
                           alignItems: "flex-start",
                           gap: "14px"
@@ -659,7 +731,7 @@ function App() {
                             <span
                               style={{
                                 fontWeight: 700,
-                                color: "#1D1C1D",
+                                color: "var(--text)",
                                 fontSize: "14px"
                               }}
                             >
@@ -682,7 +754,7 @@ function App() {
                             <span
                               style={{
                                 fontSize: "12px",
-                                color: "#868686"
+                                color: "var(--text-tertiary)"
                               }}
                             >
                               {message.time}
@@ -693,7 +765,7 @@ function App() {
                             style={{
                               fontSize: "14px",
                               lineHeight: "1.6",
-                              color: "#1D1C1D",
+                              color: "var(--text)",
                               whiteSpace: "pre-wrap",
                               wordBreak: "break-word"
                             }}
@@ -713,9 +785,9 @@ function App() {
                       alignItems: "center",
                       gap: "12px",
                       padding: "12px 16px",
-                      background: "#FFFFFF",
+                      background: "var(--surface)",
                       borderRadius: "8px",
-                      boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+                      boxShadow: "var(--shadow-sm)",
                       maxWidth: "260px",
                       marginTop: "8px"
                     }}
@@ -726,7 +798,7 @@ function App() {
                       style={{ background: "#3F0E40" }}
                     />
                     <Spin size="small" />
-                    <span style={{ fontSize: "13px", color: "#616061" }}>
+                    <span style={{ fontSize: "13px", color: "var(--text-secondary)" }}>
                       AI is generating response...
                     </span>
                   </div>
@@ -769,10 +841,10 @@ function App() {
                   style={{
                     marginTop: "16px",
                     padding: "12px",
-                    background: "#FFFFFF",
-                    border: "1px solid #D0D0D0",
+                    background: "var(--surface)",
+                    border: "1px solid var(--border-strong)",
                     borderRadius: "10px",
-                    boxShadow: "0 2px 6px rgba(0,0,0,0.06)",
+                    boxShadow: "var(--shadow-md)",
                     display: "flex",
                     gap: "12px",
                     alignItems: "center"

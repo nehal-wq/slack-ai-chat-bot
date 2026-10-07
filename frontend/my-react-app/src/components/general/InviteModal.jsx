@@ -63,14 +63,14 @@ function InviteModal({ open, onClose, emailEnabled }) {
             />
           )}
 
-          <div style={{ marginTop: "16px", fontSize: "13px", color: "#616061" }}>
+          <div style={{ marginTop: "16px", fontSize: "13px", color: "var(--text-secondary)" }}>
             Invite link
           </div>
           <Typography.Paragraph
             copyable={{ text: result.inviteLink }}
             style={{
-              background: "#F8F8F8",
-              border: "1px solid #E2E2E2",
+              background: "var(--surface-subtle)",
+              border: "1px solid var(--border)",
               borderRadius: "6px",
               padding: "8px 10px",
               fontSize: "12px",

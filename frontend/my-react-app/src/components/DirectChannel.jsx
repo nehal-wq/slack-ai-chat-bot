@@ -14,9 +14,11 @@ import {
 } from "../features/direct/directSlice";
 import { directRoomId } from "../features/huddle/useHuddle";
 import MemberAvatar from "./general/MemberAvatar";
+import { notifyTyping, useTypingNames, typingLabel } from "../features/realtime/useTyping";
 import formatMessageTime from "./general/formatMessageTime";
 
-const POLL_INTERVAL_MS = 3000;
+// New messages are pushed instantly; this slow poll is only a safety net
+const POLL_INTERVAL_MS = 30000;
 const EMPTY_LIST = [];
 
 function DirectMessageRow({ message, author, isYou }) {
@@ -26,7 +28,7 @@ function DirectMessageRow({ message, author, isYou }) {
         style={{
           textAlign: "center",
           fontSize: "12px",
-          color: "#868686",
+          color: "var(--text-tertiary)",
           margin: "10px 0"
         }}
       >
@@ -41,8 +43,8 @@ function DirectMessageRow({ message, author, isYou }) {
         padding: "10px 16px",
         marginBottom: "6px",
         borderRadius: "8px",
-        background: "#FFFFFF",
-        boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+        background: "var(--surface)",
+        boxShadow: "var(--shadow-sm)",
         display: "flex",
         alignItems: "flex-start",
         gap: "14px"
@@ -51,11 +53,11 @@ function DirectMessageRow({ message, author, isYou }) {
       <MemberAvatar member={author} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "2px" }}>
-          <span style={{ fontWeight: 700, color: "#1D1C1D", fontSize: "14px" }}>
+          <span style={{ fontWeight: 700, color: "var(--text)", fontSize: "14px" }}>
             {author.name}
           </span>
           {isYou && <Tag color="blue" style={{ fontSize: "11px", lineHeight: "18px" }}>you</Tag>}
-          <span style={{ fontSize: "12px", color: "#868686" }}>
+          <span style={{ fontSize: "12px", color: "var(--text-tertiary)" }}>
             {formatMessageTime(message.createdAt)}
           </span>
         </div>
@@ -63,7 +65,7 @@ function DirectMessageRow({ message, author, isYou }) {
           style={{
             fontSize: "14px",
             lineHeight: "1.6",
-            color: "#1D1C1D",
+            color: "var(--text)",
             whiteSpace: "pre-wrap",
             wordBreak: "break-word"
           }}
@@ -87,6 +89,8 @@ function DirectChannel({ me, other, huddle }) {
   const messagesEndRef = useRef(null);
 
   const room = directRoomId(me.id, other.id);
+  const isOnline = useSelector((state) => state.general.online.includes(other.id));
+  const typingText = typingLabel(useTypingNames("dm", other.id));
   const call = huddle.rooms[room];
   const inThisCall = huddle.inCall && huddle.activeRoom === room;
   const lastMessageId = messages[messages.length - 1]?.id;
@@ -103,12 +107,18 @@ function DirectChannel({ me, other, huddle }) {
     return () => clearInterval(timer);
   }, [dispatch, me.id, other.id]);
 
-  // Viewing the conversation marks it read
+  // Viewing the conversation marks it read, but only while the tab is
+  // visible, so messages that arrive while you're away stay unread
   useEffect(() => {
-    if (lastMessageId) {
-      dispatch(markDirectRead({ otherId: other.id }));
-    }
-  }, [dispatch, me.id, other.id, lastMessageId]);
+    const markRead = () => {
+      if (lastMessageId && !document.hidden) {
+        dispatch(markDirectRead({ otherId: other.id }));
+      }
+    };
+    markRead();
+    document.addEventListener("visibilitychange", markRead);
+    return () => document.removeEventListener("visibilitychange", markRead);
+  }, [dispatch, other.id, lastMessageId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -154,19 +164,19 @@ function DirectChannel({ me, other, huddle }) {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: "10px", minWidth: 0 }}>
-          <MemberAvatar member={other} size={32} />
+          <MemberAvatar member={other} size={32} online={isOnline} />
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 700, color: "#1D1C1D" }}>{other.name}</div>
+            <div style={{ fontWeight: 700, color: "var(--text)" }}>{other.name}</div>
             <div
               style={{
                 fontSize: "12px",
-                color: "#868686",
+                color: "var(--text-tertiary)",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap"
               }}
             >
-              {other.email}
+              {isOnline ? "Active now" : "Away"} · {other.email}
             </div>
           </div>
         </div>
@@ -212,12 +222,12 @@ function DirectChannel({ me, other, huddle }) {
             padding: "10px 14px",
             marginBottom: "12px",
             borderRadius: "8px",
-            background: "#E8F5EE",
-            border: "1px solid #B7E1C9"
+            background: "var(--success-subtle)",
+            border: "1px solid var(--success-border)"
           }}
         >
-          <span style={{ display: "flex", alignItems: "center", gap: "8px", color: "#1D1C1D" }}>
-            <PhoneOutlined style={{ color: "#007A5A" }} />
+          <span style={{ display: "flex", alignItems: "center", gap: "8px", color: "var(--text)" }}>
+            <PhoneOutlined style={{ color: "var(--brand-text)" }} />
             <strong>{call.startedBy} is calling…</strong>
           </span>
           <span style={{ display: "flex", gap: "8px" }}>
@@ -258,8 +268,8 @@ function DirectChannel({ me, other, huddle }) {
         {loaded && messages.length === 0 && (
           <div
             style={{
-              background: "#FFFFFF",
-              border: "1px solid #E2E2E2",
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
               borderRadius: "12px",
               padding: "28px",
               margin: "20px auto",
@@ -268,10 +278,10 @@ function DirectChannel({ me, other, huddle }) {
             }}
           >
             <MemberAvatar member={other} size={56} />
-            <div style={{ fontSize: "18px", fontWeight: 700, color: "#1D1C1D", marginTop: "12px" }}>
+            <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--text)", marginTop: "12px" }}>
               This is the beginning of your conversation with {other.name}
             </div>
-            <div style={{ color: "#616061", fontSize: "14px", marginTop: "6px" }}>
+            <div style={{ color: "var(--text-secondary)", fontSize: "14px", marginTop: "6px" }}>
               Messages here are only visible to the two of you. Use the call buttons above for a
               quick audio or video call.
             </div>
@@ -290,6 +300,15 @@ function DirectChannel({ me, other, huddle }) {
           );
         })}
 
+        {typingText && (
+          <div
+            aria-live="polite"
+            style={{ padding: "4px 16px", fontSize: "12px", color: "var(--text-tertiary)", fontStyle: "italic" }}
+          >
+            {typingText}
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 
@@ -298,10 +317,10 @@ function DirectChannel({ me, other, huddle }) {
         style={{
           marginTop: "16px",
           padding: "12px",
-          background: "#FFFFFF",
-          border: "1px solid #D0D0D0",
+          background: "var(--surface)",
+          border: "1px solid var(--border-strong)",
           borderRadius: "10px",
-          boxShadow: "0 2px 6px rgba(0,0,0,0.06)",
+          boxShadow: "var(--shadow-md)",
           display: "flex",
           gap: "12px",
           alignItems: "center"
@@ -311,7 +330,10 @@ function DirectChannel({ me, other, huddle }) {
           variant="borderless"
           placeholder={`Message ${other.name}`}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => {
+            setInput(e.target.value);
+            if (e.target.value) notifyTyping("dm", other.id);
+          }}
           onPressEnter={handleSend}
           style={{ fontSize: "14px", flex: 1 }}
         />

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { WS_BASE } from "../../config";
 import { getSessionToken, apiRequest } from "../auth/session";
+import { publish, setRealtimeSender } from "../realtime/realtimeBus";
 
 // Peer-to-peer audio/video calls: #general huddles and 1:1 direct calls.
 // The backend relays signaling messages over a WebSocket; media goes
@@ -263,10 +264,18 @@ function useHuddle(memberId) {
           if (!joinAckedRef.current) cleanupLocal();
           break;
         default:
+          // Chat events (new messages, presence, typing) go to whoever subscribed
+          publish(message);
           break;
       }
     };
   }, [memberId, callPeer, closePeer, cleanupLocal, handleSignal, send]);
+
+  // Let chat features send small signals (e.g. typing) on this socket
+  useEffect(() => {
+    setRealtimeSender(send);
+    return () => setRealtimeSender(null);
+  }, [send]);
 
   // One signaling socket per signed-in member, reconnecting if it drops
   useEffect(() => {
@@ -280,7 +289,11 @@ function useHuddle(memberId) {
       const token = getSessionToken() || "";
       socket = new WebSocket(`${WS_BASE}/ws/huddle?token=${encodeURIComponent(token)}`);
       socketRef.current = socket;
-      socket.onopen = () => setConnected(true);
+      socket.onopen = () => {
+        setConnected(true);
+        // Screens re-fetch on (re)connect to catch anything missed while offline
+        publish({ type: "realtime:connected" });
+      };
       socket.onmessage = (event) => {
         try {
           handleMessageRef.current?.(JSON.parse(event.data));

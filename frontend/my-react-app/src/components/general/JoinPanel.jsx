@@ -13,10 +13,10 @@ import {
 const panelStyle = {
   marginTop: "16px",
   padding: "20px",
-  background: "#FFFFFF",
-  border: "1px solid #D0D0D0",
+  background: "var(--surface)",
+  border: "1px solid var(--border-strong)",
   borderRadius: "10px",
-  boxShadow: "0 2px 6px rgba(0,0,0,0.06)"
+  boxShadow: "var(--shadow-md)"
 };
 
 const LOGIN_POLL_MS = 2000;
@@ -94,10 +94,10 @@ function JoinPanel({ inviteToken, currentMember, sessionExpired, onInviteHandled
   if (invite) {
     return (
       <div style={panelStyle}>
-        <div style={{ fontSize: "16px", fontWeight: 700, color: "#1D1C1D" }}>
+        <div style={{ fontSize: "16px", fontWeight: 700, color: "var(--text)" }}>
           {invite.invitedByName} invited you to #general 🎉
         </div>
-        <div style={{ color: "#616061", fontSize: "13px", margin: "4px 0 14px" }}>
+        <div style={{ color: "var(--text-secondary)", fontSize: "13px", margin: "4px 0 14px" }}>
           Joining as <strong>{invite.email}</strong>
         </div>
         {currentMember && (
@@ -154,12 +154,12 @@ function JoinPanel({ inviteToken, currentMember, sessionExpired, onInviteHandled
 
       {linkSent ? (
         <div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
-          <CheckCircleFilled style={{ color: "#007A5A", fontSize: "22px", marginTop: "2px" }} />
+          <CheckCircleFilled style={{ color: "var(--brand-text)", fontSize: "22px", marginTop: "2px" }} />
           <div>
-            <div style={{ fontSize: "16px", fontWeight: 700, color: "#1D1C1D" }}>
+            <div style={{ fontSize: "16px", fontWeight: 700, color: "var(--text)" }}>
               Check your email
             </div>
-            <div style={{ color: "#616061", fontSize: "13px", margin: "4px 0 10px" }}>
+            <div style={{ color: "var(--text-secondary)", fontSize: "13px", margin: "4px 0 10px" }}>
               {linkSent.emailed
                 ? `We sent a sign-in link to ${linkSent.email}. Click it on any device (this computer or your phone) and this page will sign you in automatically. The link expires in 15 minutes.`
                 : "Email isn't configured on the server, so the sign-in link was printed in the backend server log."}
@@ -171,7 +171,7 @@ function JoinPanel({ inviteToken, currentMember, sessionExpired, onInviteHandled
                   alignItems: "center",
                   gap: "8px",
                   fontSize: "12px",
-                  color: "#616061",
+                  color: "var(--text-secondary)",
                   marginBottom: "10px"
                 }}
               >
@@ -185,10 +185,10 @@ function JoinPanel({ inviteToken, currentMember, sessionExpired, onInviteHandled
         </div>
       ) : (
         <>
-          <div style={{ fontSize: "16px", fontWeight: 700, color: "#1D1C1D" }}>
+          <div style={{ fontSize: "16px", fontWeight: 700, color: "var(--text)" }}>
             {sessionExpired ? "Your session expired. Sign in again" : "Sign in to #general"}
           </div>
-          <div style={{ color: "#616061", fontSize: "13px", margin: "4px 0 14px" }}>
+          <div style={{ color: "var(--text-secondary)", fontSize: "13px", margin: "4px 0 14px" }}>
             Enter your email and we'll send you a sign-in link. No password needed. New here?
             Ask a teammate to invite you.
           </div>

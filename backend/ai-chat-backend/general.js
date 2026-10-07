@@ -2,6 +2,7 @@ const express = require("express");
 const crypto = require("crypto");
 const { mailer, sendMail } = require("./mailer");
 const { collections, NO_MONGO_ID } = require("./db");
+const { bus } = require("./events");
 
 // #general team channel: members, email invites and messages, stored in
 // MongoDB (collections: members, messages, settings).
@@ -104,11 +105,17 @@ async function addMessage(message) {
     ...message
   };
   await collections.messages().insertOne({ ...fullMessage });
+  // Pushed to every signed-in browser right away
+  bus.emit("general:message", fullMessage);
   return fullMessage;
 }
 
-function addSystemMessage(text) {
-  return addMessage({ type: "system", text });
+// System messages accompany every member/role/settings change, so they also
+// tell browsers to refresh the member list
+async function addSystemMessage(text) {
+  const message = await addMessage({ type: "system", text });
+  bus.emit("general:changed");
+  return message;
 }
 
 async function recentMessages(limit) {
@@ -300,6 +307,7 @@ function createGeneralRouter({ getAIResponse, requireMember, createSession }) {
     let member;
     if (existing) {
       member = await updateMember(existing.id, invite);
+      bus.emit("general:changed");
     } else {
       member = {
         id: newId(),

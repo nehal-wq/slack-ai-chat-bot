@@ -1,6 +1,7 @@
 const express = require("express");
 const crypto = require("crypto");
 const { collections, NO_MONGO_ID } = require("./db");
+const { bus } = require("./events");
 
 // Direct (1:1) messages between #general members, stored in MongoDB
 // (collections: directMessages, directReads).
@@ -20,6 +21,8 @@ async function addDirectMessage(a, b, message) {
     ...message
   };
   await collections.directMessages().insertOne({ ...fullMessage });
+  // Pushed to both people in the conversation right away
+  bus.emit("dm:message", { members: [a, b], message: fullMessage });
   return fullMessage;
 }
 

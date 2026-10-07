@@ -15,12 +15,14 @@ import {
   postGeneralMessage
 } from "../features/general/generalSlice";
 import MemberAvatar from "./general/MemberAvatar";
+import { notifyTyping, useTypingNames, typingLabel } from "../features/realtime/useTyping";
 import formatMessageTime from "./general/formatMessageTime";
 import InviteModal from "./general/InviteModal";
 import MembersDrawer from "./general/MembersDrawer";
 import JoinPanel from "./general/JoinPanel";
 
-const POLL_INTERVAL_MS = 3000;
+// New messages are pushed instantly; this slow poll is only a safety net
+const POLL_INTERVAL_MS = 30000;
 const BOT_MENTION_PATTERN = /@(ai|slack ai)\b/i;
 
 function isAwaitingBot(messages) {
@@ -40,7 +42,7 @@ function MessageRow({ message, member, isYou }) {
         style={{
           textAlign: "center",
           fontSize: "12px",
-          color: "#868686",
+          color: "var(--text-tertiary)",
           margin: "10px 0"
         }}
       >
@@ -59,8 +61,8 @@ function MessageRow({ message, member, isYou }) {
         padding: "10px 16px",
         marginBottom: "6px",
         borderRadius: "8px",
-        background: "#FFFFFF",
-        boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+        background: "var(--surface)",
+        boxShadow: "var(--shadow-sm)",
         display: "flex",
         alignItems: "flex-start",
         gap: "14px"
@@ -76,7 +78,7 @@ function MessageRow({ message, member, isYou }) {
             marginBottom: "2px"
           }}
         >
-          <span style={{ fontWeight: 700, color: "#1D1C1D", fontSize: "14px" }}>
+          <span style={{ fontWeight: 700, color: "var(--text)", fontSize: "14px" }}>
             {member?.name || message.author}
           </span>
           {isBot && (
@@ -88,7 +90,7 @@ function MessageRow({ message, member, isYou }) {
             </Tag>
           )}
           {isYou && <Tag color="blue" style={{ fontSize: "11px", lineHeight: "18px" }}>you</Tag>}
-          <span style={{ fontSize: "12px", color: "#868686" }}>
+          <span style={{ fontSize: "12px", color: "var(--text-tertiary)" }}>
             {formatMessageTime(message.createdAt)}
           </span>
         </div>
@@ -96,7 +98,7 @@ function MessageRow({ message, member, isYou }) {
           style={{
             fontSize: "14px",
             lineHeight: "1.6",
-            color: "#1D1C1D",
+            color: "var(--text)",
             whiteSpace: "pre-wrap",
             wordBreak: "break-word"
           }}
@@ -137,6 +139,7 @@ function GeneralChannel({ inviteToken, onInviteHandled, huddle }) {
   const pendingCount = members.length - joinedMembers.length;
   const membersById = Object.fromEntries(members.map((m) => [m.id, m]));
   const botTyping = isAwaitingBot(messages);
+  const typingText = typingLabel(useTypingNames("general"));
 
   // Inviting is owner-only unless the owner allows members to invite
   const canInvite =
@@ -218,7 +221,7 @@ function GeneralChannel({ inviteToken, onInviteHandled, huddle }) {
               </Tooltip>
             ))}
           </Avatar.Group>
-          <span style={{ fontSize: "13px", color: "#616061" }}>
+          <span style={{ fontSize: "13px", color: "var(--text-secondary)" }}>
             {joinedMembers.length} {joinedMembers.length === 1 ? "member" : "members"}
             {pendingCount > 0 && ` · ${pendingCount} pending`}
           </span>
@@ -275,14 +278,14 @@ function GeneralChannel({ inviteToken, onInviteHandled, huddle }) {
             padding: "10px 14px",
             marginBottom: "12px",
             borderRadius: "8px",
-            background: "#E8F5EE",
-            border: "1px solid #B7E1C9"
+            background: "var(--success-subtle)",
+            border: "1px solid var(--success-border)"
           }}
         >
-          <span style={{ display: "flex", alignItems: "center", gap: "8px", color: "#1D1C1D" }}>
-            <CustomerServiceOutlined style={{ color: "#007A5A" }} />
+          <span style={{ display: "flex", alignItems: "center", gap: "8px", color: "var(--text)" }}>
+            <CustomerServiceOutlined style={{ color: "var(--brand-text)" }} />
             <strong>Huddle in progress</strong>
-            <span style={{ color: "#616061" }}>
+            <span style={{ color: "var(--text-secondary)" }}>
               with {huddle.huddle.participants.map((p) => p.name).join(", ")}
             </span>
           </span>
@@ -310,8 +313,8 @@ function GeneralChannel({ inviteToken, onInviteHandled, huddle }) {
         {signedOut && (
           <div
             style={{
-              background: "#FFFFFF",
-              border: "1px solid #E2E2E2",
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
               borderRadius: "12px",
               padding: "28px",
               margin: "20px auto",
@@ -319,10 +322,10 @@ function GeneralChannel({ inviteToken, onInviteHandled, huddle }) {
               textAlign: "center"
             }}
           >
-            <div style={{ fontSize: "20px", fontWeight: 700, color: "#1D1C1D" }}>
+            <div style={{ fontSize: "20px", fontWeight: 700, color: "var(--text)" }}>
               #general is for workspace members
             </div>
-            <div style={{ color: "#616061", fontSize: "14px", marginTop: "6px" }}>
+            <div style={{ color: "var(--text-secondary)", fontSize: "14px", marginTop: "6px" }}>
               Sign in with your email below to see the conversation. You'll get a one-time
               sign-in link, so there's no password to remember.
             </div>
@@ -338,8 +341,8 @@ function GeneralChannel({ inviteToken, onInviteHandled, huddle }) {
         {loaded && messages.length === 0 && (
           <div
             style={{
-              background: "#FFFFFF",
-              border: "1px solid #E2E2E2",
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
               borderRadius: "12px",
               padding: "28px",
               margin: "20px auto",
@@ -347,10 +350,10 @@ function GeneralChannel({ inviteToken, onInviteHandled, huddle }) {
               textAlign: "center"
             }}
           >
-            <div style={{ fontSize: "20px", fontWeight: 700, color: "#1D1C1D" }}>
+            <div style={{ fontSize: "20px", fontWeight: 700, color: "var(--text)" }}>
               This is the very beginning of #general
             </div>
-            <div style={{ color: "#616061", fontSize: "14px", marginTop: "6px" }}>
+            <div style={{ color: "var(--text-secondary)", fontSize: "14px", marginTop: "6px" }}>
               Invite your teammates by email and start the conversation. Mention{" "}
               <strong>@ai</strong> in a message to bring the AI bot in.
             </div>
@@ -373,11 +376,20 @@ function GeneralChannel({ inviteToken, onInviteHandled, huddle }) {
               alignItems: "center",
               gap: "10px",
               padding: "8px 16px",
-              color: "#616061",
+              color: "var(--text-secondary)",
               fontSize: "13px"
             }}
           >
             <RobotOutlined /> Slack AI is typing… <Spin size="small" />
+          </div>
+        )}
+
+        {typingText && (
+          <div
+            aria-live="polite"
+            style={{ padding: "4px 16px", fontSize: "12px", color: "var(--text-tertiary)", fontStyle: "italic" }}
+          >
+            {typingText}
           </div>
         )}
 
@@ -390,10 +402,10 @@ function GeneralChannel({ inviteToken, onInviteHandled, huddle }) {
           style={{
             marginTop: "16px",
             padding: "16px",
-            background: "#FFFFFF",
-            border: "1px solid #D0D0D0",
+            background: "var(--surface)",
+            border: "1px solid var(--border-strong)",
             borderRadius: "10px",
-            color: "#616061",
+            color: "var(--text-secondary)",
             fontSize: "14px",
             display: "flex",
             alignItems: "center",
@@ -431,10 +443,10 @@ function GeneralChannel({ inviteToken, onInviteHandled, huddle }) {
             style={{
               marginTop: "16px",
               padding: "12px",
-              background: "#FFFFFF",
-              border: "1px solid #D0D0D0",
+              background: "var(--surface)",
+              border: "1px solid var(--border-strong)",
               borderRadius: "10px",
-              boxShadow: "0 2px 6px rgba(0,0,0,0.06)",
+              boxShadow: "var(--shadow-md)",
               display: "flex",
               gap: "12px",
               alignItems: "center"
@@ -444,7 +456,10 @@ function GeneralChannel({ inviteToken, onInviteHandled, huddle }) {
               variant="borderless"
               placeholder={`Message #general as ${currentMember.name} — mention @ai to ask the bot`}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value);
+                if (e.target.value) notifyTyping("general");
+              }}
               onPressEnter={handleSend}
               style={{ fontSize: "14px", flex: 1 }}
             />

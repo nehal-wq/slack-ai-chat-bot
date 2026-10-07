@@ -1,8 +1,12 @@
 const { WebSocketServer } = require("ws");
+const { bus } = require("./events");
 
-// Call signaling for #general huddles and 1:1 direct calls.
-// Media flows peer-to-peer over WebRTC; this server only tracks who is in
-// which call and relays offers, answers and ICE candidates between them.
+// The realtime connection every signed-in browser keeps open:
+//  - pushes new #general and DM messages instantly (events.js)
+//  - presence (who is online) and typing indicators
+//  - call signaling for #general huddles and 1:1 direct calls. Media flows
+//    peer-to-peer over WebRTC; this server only tracks who is in which call
+//    and relays offers, answers and ICE candidates between them.
 //
 // Rooms:
 //   "general"         the #general huddle (up to 6 people, rings everyone)
@@ -13,6 +17,8 @@ const MAX_GENERAL_PARTICIPANTS = 6; // full mesh: every participant connects to 
 const HEARTBEAT_MS = 15000;
 // Membership is re-checked at most this often per connection (not per message)
 const MEMBER_RECHECK_MS = 10000;
+// Typing signals from one connection are relayed at most this often
+const TYPING_THROTTLE_MS = 1500;
 
 function formatDuration(ms) {
   const totalSeconds = Math.max(1, Math.round(ms / 1000));
@@ -269,10 +275,78 @@ function attachHuddleServer(
         }
         break;
       }
+      case "typing":
+        relayTyping(socket, current, message);
+        break;
       default:
         break;
     }
   }
+
+  // --- Presence, typing and pushed chat events ---
+
+  function signedInClients() {
+    return [...wss.clients].filter((client) => client.memberId);
+  }
+
+  function onlineMemberIds() {
+    return [...new Set(signedInClients().map((client) => client.memberId))];
+  }
+
+  function broadcastPresence() {
+    const message = { type: "presence", online: onlineMemberIds() };
+    for (const client of signedInClients()) send(client, message);
+  }
+
+  // "#general: Priya is typing" goes to everyone else; DM typing only to the
+  // other person. Throttled so a fast typist doesn't flood the server.
+  function relayTyping(socket, member, message) {
+    // Throttled per conversation, so #general typing never hides DM typing
+    const key = message.target === "dm" ? `dm:${message.to}` : message.target;
+    socket.lastTypingAt ??= new Map();
+    if (Date.now() - (socket.lastTypingAt.get(key) || 0) < TYPING_THROTTLE_MS) return;
+    socket.lastTypingAt.set(key, Date.now());
+    const event = { type: "typing", target: message.target, from: member.id, name: member.name };
+    if (message.target === "general") {
+      for (const client of signedInClients()) {
+        if (client.memberId !== member.id) send(client, event);
+      }
+    } else if (message.target === "dm" && typeof message.to === "string") {
+      for (const client of socketsOf(message.to)) send(client, event);
+    }
+  }
+
+  function onGeneralMessage(message) {
+    const event = { type: "general:message", message };
+    for (const client of signedInClients()) send(client, event);
+  }
+
+  // Members, roles or settings changed: re-check every connection (removed
+  // people are disconnected), then tell browsers to refresh the member list
+  async function onGeneralChanged() {
+    for (const client of signedInClients()) {
+      const member = await findJoinedMember(client.memberId);
+      if (!member) {
+        client.close(4001, "Not a member of #general");
+      } else {
+        client.member = member;
+        client.memberCheckedAt = Date.now();
+        send(client, { type: "general:changed" });
+      }
+    }
+  }
+
+  function onDirectMessage({ members, message }) {
+    const event = { type: "dm:message", members, message };
+    for (const memberId of members) {
+      for (const client of socketsOf(memberId)) send(client, event);
+    }
+  }
+
+  const onChanged = () => onGeneralChanged().catch(logFailure);
+  bus.on("general:message", onGeneralMessage);
+  bus.on("general:changed", onChanged);
+  bus.on("dm:message", onDirectMessage);
 
   async function authenticate(socket, req) {
     // Only pages served from our own frontend may open call connections
@@ -291,6 +365,7 @@ function attachHuddleServer(
     socket.member = member;
     socket.memberCheckedAt = Date.now();
     sendState(socket);
+    broadcastPresence();
     return true;
   }
 
@@ -318,6 +393,7 @@ function attachHuddleServer(
       if (rooms.get(roomId)?.participants.get(socket.memberId)?.socket === socket) {
         leave(socket.memberId);
       }
+      broadcastPresence();
     });
   });
 
@@ -332,7 +408,12 @@ function attachHuddleServer(
       client.ping();
     }
   }, HEARTBEAT_MS);
-  wss.on("close", () => clearInterval(heartbeat));
+  wss.on("close", () => {
+    clearInterval(heartbeat);
+    bus.off("general:message", onGeneralMessage);
+    bus.off("general:changed", onChanged);
+    bus.off("dm:message", onDirectMessage);
+  });
 
   return wss;
 }

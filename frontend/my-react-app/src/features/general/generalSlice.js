@@ -100,7 +100,11 @@ const initialState = {
   hasSession: Boolean(getSessionToken()),
   authChecked: false,
   sessionExpired: false,
-  loginError: null
+  loginError: null,
+  // Pushed over the realtime connection
+  online: [],
+  // #general messages that arrived while you weren't looking at #general
+  unseenCount: 0
 };
 
 function addMemberToState(state, member) {
@@ -134,7 +138,23 @@ function signedOut(state) {
 const generalSlice = createSlice({
   name: "general",
   initialState,
-  reducers: {},
+  reducers: {
+    generalMessageReceived: (state, action) => {
+      const message = action.payload;
+      if (!state.messages.some((m) => m.id === message.id)) {
+        state.messages.push(message);
+      }
+    },
+    presenceChanged: (state, action) => {
+      state.online = action.payload;
+    },
+    generalUnseenAdded: (state) => {
+      state.unseenCount += 1;
+    },
+    generalSeen: (state) => {
+      state.unseenCount = 0;
+    }
+  },
   extraReducers: (builder) => {
     builder
       .addCase(fetchMe.fulfilled, (state, action) => {
@@ -205,5 +225,8 @@ const generalSlice = createSlice({
       );
   }
 });
+
+export const { generalMessageReceived, presenceChanged, generalUnseenAdded, generalSeen } =
+  generalSlice.actions;
 
 export default generalSlice.reducer;

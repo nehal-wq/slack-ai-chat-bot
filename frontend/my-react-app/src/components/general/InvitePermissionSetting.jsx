@@ -27,8 +27,8 @@ function InvitePermissionSetting({ currentMember }) {
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
         <div>
-          <div style={{ fontWeight: 600, color: "#1D1C1D" }}>Members can invite people</div>
-          <div style={{ fontSize: "12px", color: "#868686" }}>
+          <div style={{ fontWeight: 600, color: "var(--text)" }}>Members can invite people</div>
+          <div style={{ fontSize: "12px", color: "var(--text-tertiary)" }}>
             {membersCanInvite
               ? "Anyone in the workspace can send invites."
               : "Only the workspace owner can send invites."}

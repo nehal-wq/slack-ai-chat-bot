@@ -25,7 +25,8 @@ function initials(name = "?") {
   return (parts[0][0] + (parts[1]?.[0] || "")).toUpperCase();
 }
 
-function MemberAvatar({ member, size = 40, bot = false }) {
+// online: true/false shows a green/hollow presence dot; leave undefined to hide it
+function MemberAvatar({ member, size = 40, bot = false, online }) {
   if (bot) {
     return (
       <Avatar
@@ -36,7 +37,7 @@ function MemberAvatar({ member, size = 40, bot = false }) {
     );
   }
 
-  return (
+  const avatar = (
     <Avatar
       size={size}
       style={{
@@ -48,6 +49,32 @@ function MemberAvatar({ member, size = 40, bot = false }) {
     >
       {initials(member.name)}
     </Avatar>
+  );
+
+  if (online === undefined) return avatar;
+
+  const dot = Math.max(8, Math.round(size * 0.32));
+  return (
+    <span
+      style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}
+      title={online ? "Online" : "Offline"}
+    >
+      {avatar}
+      <span
+        aria-label={online ? "Online" : "Offline"}
+        style={{
+          position: "absolute",
+          right: -2,
+          bottom: -2,
+          width: dot,
+          height: dot,
+          borderRadius: "50%",
+          background: online ? "#2BAC76" : "var(--surface)",
+          border: online ? "2px solid var(--surface)" : "2px solid var(--text-tertiary)",
+          boxSizing: "border-box"
+        }}
+      />
+    </span>
   );
 }
 

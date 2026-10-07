@@ -55,7 +55,24 @@ const initialState = {
 const directSlice = createSlice({
   name: "direct",
   initialState,
-  reducers: {},
+  reducers: {
+    // A DM pushed over the realtime connection (sent by either person)
+    directMessageReceived: (state, action) => {
+      const { message, members, myId } = action.payload;
+      const otherId = members.find((id) => id !== myId);
+      if (!otherId) return;
+
+      const list = state.messagesByMember[otherId];
+      if (list && !list.some((m) => m.id === message.id)) list.push(message);
+
+      const conversation = state.conversations.find((c) => c.member.id === otherId);
+      if (conversation) {
+        conversation.lastMessage = message;
+        // Unread until the open conversation marks it read
+        if (message.type === "user" && message.memberId !== myId) conversation.unread += 1;
+      }
+    }
+  },
   extraReducers: (builder) => {
     builder
       .addCase(fetchConversations.fulfilled, (state, action) => {
@@ -91,5 +108,7 @@ const directSlice = createSlice({
       );
   }
 });
+
+export const { directMessageReceived } = directSlice.actions;
 
 export default directSlice.reducer;

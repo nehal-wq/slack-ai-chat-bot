@@ -1,21 +1,28 @@
 import { useState, useEffect, useCallback } from "react";
-import { Button, Descriptions, Tag, Popconfirm, Badge } from "antd";
+import { Button, Descriptions, Tag, Popconfirm, Badge, Segmented } from "antd";
 import {
   ReloadOutlined,
   DeleteOutlined,
   ApiOutlined,
   SlackOutlined,
   ToolOutlined,
-  TeamOutlined
+  TeamOutlined,
+  BgColorsOutlined,
+  SunOutlined,
+  MoonOutlined,
+  DesktopOutlined,
+  BellOutlined
 } from "@ant-design/icons";
+import { useTheme } from "../theme/themeContext";
 import { useDispatch, useSelector } from "react-redux";
 import { API_BASE as API_URL } from "../config";
 import { fetchGeneral } from "../features/general/generalSlice";
 import InvitePermissionSetting from "./general/InvitePermissionSetting";
+import NotificationSettings from "./NotificationSettings";
 
 const cardStyle = {
-  background: "#FFFFFF",
-  border: "1px solid #E2E2E2",
+  background: "var(--surface)",
+  border: "1px solid var(--border)",
   borderRadius: "10px",
   padding: "20px",
   marginBottom: "16px",
@@ -25,7 +32,7 @@ const cardStyle = {
 const cardTitleStyle = {
   fontSize: "15px",
   fontWeight: 700,
-  color: "#1D1C1D",
+  color: "var(--text)",
   marginBottom: "14px",
   display: "flex",
   alignItems: "center",
@@ -34,6 +41,7 @@ const cardTitleStyle = {
 
 function BotSettings({ messageCount, onClearHistory }) {
   const dispatch = useDispatch();
+  const { mode: themeMode, setMode: setThemeMode } = useTheme();
   const currentMember = useSelector((state) =>
     state.general.members.find((m) => m.id === state.general.currentMemberId)
   );
@@ -99,11 +107,49 @@ function BotSettings({ messageCount, onClearHistory }) {
           <Descriptions.Item label="Last checked">{checkedAt || "—"}</Descriptions.Item>
         </Descriptions>
         {!checking && !health?.online && (
-          <div style={{ color: "#B42318", fontSize: "13px", marginTop: "10px" }}>
+          <div style={{ color: "var(--danger-text)", fontSize: "13px", marginTop: "10px" }}>
             Can't reach the backend. Start it with <code>npm start</code> in{" "}
             <code>backend/ai-chat-backend</code>.
           </div>
         )}
+      </div>
+
+      <div style={cardStyle}>
+        <div style={cardTitleStyle}>
+          <BgColorsOutlined /> Appearance
+        </div>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "12px",
+            flexWrap: "wrap"
+          }}
+        >
+          <div>
+            <div style={{ fontWeight: 600, color: "var(--text)" }}>Theme</div>
+            <div style={{ fontSize: "12px", color: "var(--text-tertiary)" }}>
+              System follows your device&apos;s light or dark setting. Saved on this device.
+            </div>
+          </div>
+          <Segmented
+            value={themeMode}
+            onChange={setThemeMode}
+            options={[
+              { label: "Light", value: "light", icon: <SunOutlined /> },
+              { label: "Dark", value: "dark", icon: <MoonOutlined /> },
+              { label: "System", value: "system", icon: <DesktopOutlined /> }
+            ]}
+          />
+        </div>
+      </div>
+
+      <div style={cardStyle}>
+        <div style={cardTitleStyle}>
+          <BellOutlined /> Notifications
+        </div>
+        <NotificationSettings />
       </div>
 
       <div style={cardStyle}>
@@ -113,7 +159,7 @@ function BotSettings({ messageCount, onClearHistory }) {
         {currentMember ? (
           <InvitePermissionSetting currentMember={currentMember} />
         ) : (
-          <div style={{ color: "#868686", fontSize: "13px" }}>
+          <div style={{ color: "var(--text-tertiary)", fontSize: "13px" }}>
             Sign in to #general to see workspace settings.
           </div>
         )}
@@ -158,7 +204,7 @@ function BotSettings({ messageCount, onClearHistory }) {
           style={{
             margin: 0,
             paddingLeft: "20px",
-            color: "#1D1C1D",
+            color: "var(--text)",
             fontSize: "14px",
             lineHeight: "1.8"
           }}

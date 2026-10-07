@@ -11,6 +11,7 @@ import {
   CustomerServiceOutlined
 } from "@ant-design/icons";
 import MemberAvatar from "../general/MemberAvatar";
+import { startRingtone, showNotification } from "../../features/notifications/notify";
 import { GENERAL_ROOM } from "../../features/huddle/useHuddle";
 
 function formatElapsed(startedAt, now) {
@@ -116,6 +117,21 @@ function ParticipantTile({ participant, stream, isLocal, connectionState, videoO
 }
 
 function RingCard({ ring, onJoin, onDismiss }) {
+  // Ring until answered, declined or the caller hangs up (card unmounts)
+  useEffect(() => startRingtone(), []);
+
+  // Background tab: also pop a desktop notification
+  useEffect(() => {
+    if (!document.hidden) return;
+    showNotification({
+      title: ring.direct
+        ? `${ring.from} is calling you`
+        : `${ring.from} started a huddle in #general`,
+      body: ring.video ? "Video call" : "Audio call",
+      tag: `ring-${ring.room}`
+    });
+  }, [ring]);
+
   return (
     <div
       style={{
@@ -123,8 +139,8 @@ function RingCard({ ring, onJoin, onDismiss }) {
         right: "16px",
         bottom: "16px",
         width: "min(340px, calc(100vw - 32px))",
-        background: "#FFFFFF",
-        border: "1px solid #E2E2E2",
+        background: "var(--surface)",
+        border: "1px solid var(--border)",
         borderRadius: "12px",
         boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
         padding: "16px",
@@ -132,14 +148,14 @@ function RingCard({ ring, onJoin, onDismiss }) {
       }}
     >
       <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-        <CustomerServiceOutlined style={{ fontSize: "22px", color: "#007A5A" }} />
+        <CustomerServiceOutlined style={{ fontSize: "22px", color: "var(--brand-text)" }} />
         <div>
-          <div style={{ fontWeight: 700, color: "#1D1C1D" }}>
+          <div style={{ fontWeight: 700, color: "var(--text)" }}>
             {ring.direct
               ? `${ring.from} is calling you`
               : `${ring.from} started ${ring.video ? "a video" : "an audio"} huddle`}
           </div>
-          <div style={{ fontSize: "12px", color: "#616061" }}>
+          <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
             {ring.direct ? `Direct ${ring.video ? "video" : "audio"} call` : "in #general"}
           </div>
         </div>
