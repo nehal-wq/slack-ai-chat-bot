@@ -1,111 +1,156 @@
+/* Design tokens. Components use these variables instead of raw colors, so
+   light and dark mode come from one place. data-theme is set on <html> by
+   ThemeProvider. */
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
-
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
-
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
+  --app-bg: #f8f8f8;
+  --surface: #ffffff;
+  --surface-subtle: #f8f8f8;
+  --text: #1d1c1d;
+  --text-secondary: #616061;
+  --text-tertiary: #868686;
+  --border: #e2e2e2;
+  --border-strong: #d0d0d0;
+  --brand: #007a5a;
+  --brand-text: #007a5a;
+  --accent: #1164a3;
+  --accent-subtle: #f0f7fd;
+  --success-subtle: #e8f5ee;
+  --success-border: #b7e1c9;
+  --danger-text: #b42318;
+  --sidebar: #3f0e40;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.06);
+  --mention-me-bg: #fff1c2;
+  color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
-
-  #social .button-icon {
-    filter: invert(1) brightness(2);
-  }
+:root[data-theme="dark"] {
+  --app-bg: #1a1d21;
+  --surface: #222529;
+  --surface-subtle: #2b2e33;
+  --text: #d1d2d3;
+  --text-secondary: #abacad;
+  --text-tertiary: #8e8f91;
+  --border: #35373b;
+  --border-strong: #45474b;
+  --brand: #007a5a;
+  --brand-text: #2bac76;
+  --accent: #1d9bd1;
+  --accent-subtle: #1b2c38;
+  --success-subtle: #12302a;
+  --success-border: #1f5c4a;
+  --danger-text: #f97066;
+  --sidebar: #19171d;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.45);
+  --mention-me-bg: #5c4813;
+  color-scheme: dark;
 }
 
 body {
   margin: 0;
+  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+  background: var(--app-bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 #root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
+  min-height: 100vh;
+  min-height: 100dvh;
 }
 
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
+/* Long channel/DM lists scroll inside the sidebar. Scrolling the sidebar
+   itself would clip the menu button that sits just outside its edge. */
+.ant-layout-sider-children {
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
+/* Message hover toolbar (react / edit / delete). Always visible on touch
+   screens, where there is no hover. */
+.message-item .message-actions {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.message-item:hover .message-actions,
+.message-item:focus-within .message-actions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .message-item .message-actions {
+    opacity: 1;
   }
 }
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
-}
-p {
-  margin: 0;
-}
 
-code,
-.counter {
-  font-family: var(--mono);
+/* "3 replies · Last reply 10:32 AM" under a message with a thread */
+.thread-summary {
   display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 3px 8px 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  max-width: 100%;
 }
 
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+.thread-summary:hover,
+.thread-summary:focus-visible {
+  border-color: var(--border);
+  background: var(--surface-subtle);
+}
+
+.thread-summary-count {
+  color: var(--accent);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.thread-summary-time {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Suggested prompts on the #ai-assistant welcome card */
+.prompt-card {
+  padding: 12px 14px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.prompt-card:hover,
+.prompt-card:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  outline: none;
+}
+
+/* Two columns of prompts on wide screens, one on phones */
+.prompt-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  text-align: left;
+}
+
+@media (max-width: 600px) {
+  .prompt-grid {
+    grid-template-columns: 1fr;
+  }
 }

@@ -4,6 +4,11 @@ node_modules/
 # Environment variables
 .env
 .env.*
+# Templates with placeholder values are safe to commit
+!.env.example
+
+# Local app data (#general members and messages)
+backend/ai-chat-backend/data/
 
 # Build files
 dist/
