@@ -11,6 +11,7 @@ const {
   findJoinedMember,
   listJoinedMembers,
   addSystemMessage,
+  replyAsBot,
   findMemberByEmail,
   activateMember,
   createOwner,
@@ -19,6 +20,7 @@ const {
 } = require("./general");
 const { createAuth } = require("./auth");
 const { createDirectRouter, addDirectSystemMessage } = require("./direct");
+const { createChannelsRouter, ensureChannels, channelAudience } = require("./channels");
 const { attachHuddleServer } = require("./huddle");
 const { verifyMailer } = require("./mailer");
 const { connectDb } = require("./db");
@@ -172,6 +174,12 @@ app.use(
   })
 );
 
+// Channels beyond #general (public and private)
+app.use(
+  "/api/channels",
+  createChannelsRouter({ requireMember: auth.requireMember, getAIResponse, replyAsBot })
+);
+
 // Direct (1:1) messages between members
 app.use(
   "/api/dm",
@@ -265,6 +273,7 @@ slackApp.event("app_mention", async ({ event, say }) => {
 async function startServer() {
   try {
     await connectDb();
+    await ensureChannels();
     console.log("MongoDB connected");
   } catch (error) {
     console.error("MONGODB CONNECTION ERROR:", error.message || error);
@@ -284,6 +293,7 @@ async function startServer() {
     memberFromToken: auth.memberFromToken,
     addSystemMessage,
     addDirectSystemMessage,
+    channelAudience,
     isAllowedOrigin: config.isAllowedOrigin
   });
 }

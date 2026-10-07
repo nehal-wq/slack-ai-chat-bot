@@ -31,6 +31,7 @@ function getDb() {
 const collections = {
   members: () => getDb().collection("members"),
   messages: () => getDb().collection("messages"),
+  channels: () => getDb().collection("channels"),
   directMessages: () => getDb().collection("directMessages"),
   directReads: () => getDb().collection("directReads"),
   settings: () => getDb().collection("settings"),
@@ -46,6 +47,9 @@ async function ensureIndexes() {
     collections.members().createIndex({ inviteToken: 1 }, { sparse: true }),
     collections.messages().createIndex({ id: 1 }, { unique: true }),
     collections.messages().createIndex({ createdAt: 1 }),
+    collections.messages().createIndex({ channel: 1, createdAt: 1 }),
+    collections.channels().createIndex({ id: 1 }, { unique: true }),
+    collections.channels().createIndex({ name: 1 }, { unique: true }),
     collections.directMessages().createIndex({ id: 1 }, { unique: true }),
     collections.directMessages().createIndex({ conversation: 1, createdAt: 1 }),
     collections.sessions().createIndex({ memberId: 1 }),

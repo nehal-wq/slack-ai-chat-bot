@@ -14,6 +14,13 @@ import {
   directMessageReceived,
   directMessageUpdated
 } from "../direct/directSlice";
+import {
+  fetchChannels,
+  channelMessageReceived,
+  channelMessageUpdated,
+  channelUnseenAdded,
+  channelSeen
+} from "../channels/channelsSlice";
 import { showNotification } from "../notifications/notify";
 
 const APP_TITLE = "Slack AI Workspace";
@@ -35,11 +42,15 @@ function useRealtimeSync({ currentMemberId, myName, activeChannel, openChannel }
   const unreadDirect = useSelector((state) =>
     state.direct.conversations.reduce((total, c) => total + (c.unread || 0), 0)
   );
+  const unseenChannels = useSelector((state) =>
+    Object.values(state.channels.unseen).reduce((total, n) => total + n, 0)
+  );
+  const channelList = useSelector((state) => state.channels.list);
 
   // Handlers read the latest values without re-subscribing
   const latest = useRef({});
   useEffect(() => {
-    latest.current = { currentMemberId, myName, activeChannel, openChannel };
+    latest.current = { currentMemberId, myName, activeChannel, openChannel, channelList };
   });
 
   useEffect(() => {
@@ -85,11 +96,32 @@ function useRealtimeSync({ currentMemberId, myName, activeChannel, openChannel }
       subscribe("dm:messageUpdated", ({ message, members }) =>
         dispatch(directMessageUpdated({ message, members, myId: currentMemberId }))
       ),
+      // Other channels
+      subscribe("channel:message", ({ channelId, message }) => {
+        dispatch(channelMessageReceived(message));
+        const fromSomeoneElse = message.type !== "system" && message.memberId !== currentMemberId;
+        const info = latest.current.channelList.find((c) => c.id === (channelId || message.channel));
+        if (!fromSomeoneElse || !info?.joined || isLookingAt(`ch:${info.id}`)) return;
+        dispatch(channelUnseenAdded(info.id));
+        if (message.type === "user" && mentions(message.text, latest.current.myName)) {
+          showNotification({
+            title: `${message.author} mentioned you in #${info.name}`,
+            body: message.text,
+            tag: `channel-mention-${info.id}`,
+            onClick: () => latest.current.openChannel(`ch:${info.id}`)
+          });
+        }
+      }),
+      subscribe("channel:messageUpdated", ({ message }) =>
+        dispatch(channelMessageUpdated(message))
+      ),
+      subscribe("channels:changed", () => dispatch(fetchChannels())),
       subscribe("presence", ({ online }) => dispatch(presenceChanged(online))),
       // After (re)connecting, catch up on anything missed while offline
       subscribe("realtime:connected", () => {
         dispatch(fetchGeneral());
         dispatch(fetchConversations());
+        dispatch(fetchChannels());
       })
     ];
     return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
@@ -98,9 +130,10 @@ function useRealtimeSync({ currentMemberId, myName, activeChannel, openChannel }
   // Looking at #general (with the tab visible) clears its unseen count
   useEffect(() => {
     const markSeen = () => {
-      if (!document.hidden && latest.current.activeChannel === "general") {
-        dispatch(generalSeen());
-      }
+      if (document.hidden) return;
+      const active = latest.current.activeChannel;
+      if (active === "general") dispatch(generalSeen());
+      if (active.startsWith("ch:")) dispatch(channelSeen(active.slice(3)));
     };
     markSeen();
     document.addEventListener("visibilitychange", markSeen);
@@ -109,9 +142,9 @@ function useRealtimeSync({ currentMemberId, myName, activeChannel, openChannel }
 
   // "(3) Slack AI Workspace" when there's something unread
   useEffect(() => {
-    const total = currentMemberId ? unseenGeneral + unreadDirect : 0;
+    const total = currentMemberId ? unseenGeneral + unreadDirect + unseenChannels : 0;
     document.title = total ? `(${total}) ${APP_TITLE}` : APP_TITLE;
-  }, [currentMemberId, unseenGeneral, unreadDirect]);
+  }, [currentMemberId, unseenGeneral, unreadDirect, unseenChannels]);
 }
 
 export default useRealtimeSync;

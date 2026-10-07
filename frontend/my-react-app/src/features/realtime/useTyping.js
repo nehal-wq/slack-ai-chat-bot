@@ -11,20 +11,24 @@ const lastSentAt = new Map();
 
 // Call on every keystroke; signals are throttled per conversation
 export function notifyTyping(target, to) {
-  const key = target === "dm" ? `dm:${to}` : target;
+  const key = to ? `${target}:${to}` : target;
   if (Date.now() - (lastSentAt.get(key) || 0) < TYPING_SEND_MS) return;
   lastSentAt.set(key, Date.now());
   sendRealtime({ type: "typing", target, to });
 }
 
-// Names of people currently typing in #general (target "general") or in the
-// DM with otherId (target "dm")
+// Names of people currently typing in #general (target "general"), in the DM
+// with otherId (target "dm"), or in a channel (target "channel", otherId = channel id)
 export function useTypingNames(target, otherId) {
   const [typers, setTypers] = useState({}); // memberId -> { name, until }
 
   useEffect(() => {
-    const relevant = (event) =>
-      event.target === target && (target !== "dm" || event.from === otherId);
+    const relevant = (event) => {
+      if (event.target !== target) return false;
+      if (target === "dm") return event.from === otherId;
+      if (target === "channel") return event.channel === otherId;
+      return true;
+    };
 
     const stopTyping = (memberId) =>
       setTypers((current) => {
@@ -48,6 +52,11 @@ export function useTypingNames(target, otherId) {
       }),
       subscribe("dm:message", ({ message }) => {
         if (target === "dm" && message.memberId === otherId) stopTyping(otherId);
+      }),
+      subscribe("channel:message", ({ channelId, message }) => {
+        if (target === "channel" && channelId === otherId && message.memberId) {
+          stopTyping(message.memberId);
+        }
       })
     ];
 

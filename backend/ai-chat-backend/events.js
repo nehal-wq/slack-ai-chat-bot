@@ -9,6 +9,10 @@ const { EventEmitter } = require("events");
 //   "dm:message"       ({ members: [a, b], message })  new direct message
 //   "general:messageUpdated" (message)          edited/deleted/reacted #general message
 //   "dm:messageUpdated" ({ members: [a, b], message })  same for a direct message
+//   "channel:message"  ({ channelId, message, audience })  new message in a channel
+//   "channel:messageUpdated" ({ channelId, message, audience })
+//   "channels:changed" ({ audience })  channel list/membership/topic changed
+//   (audience: null = every signed-in member, else only these member ids)
 
 const bus = new EventEmitter();
 bus.setMaxListeners(50);

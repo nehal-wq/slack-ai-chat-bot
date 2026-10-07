@@ -25,7 +25,9 @@ import {
   CustomerServiceOutlined,
   PhoneOutlined,
   SunOutlined,
-  MoonOutlined
+  MoonOutlined,
+  LockOutlined,
+  PlusOutlined
 } from "@ant-design/icons";
 import { useSelector, useDispatch } from "react-redux";
 import {
@@ -40,6 +42,10 @@ import useHuddle, { directRoomId } from "./features/huddle/useHuddle";
 import DirectChannel from "./components/DirectChannel";
 import MemberAvatar from "./components/general/MemberAvatar";
 import { fetchConversations } from "./features/direct/directSlice";
+import { fetchChannels } from "./features/channels/channelsSlice";
+import ChannelView from "./components/ChannelView";
+import CreateChannelModal from "./components/channels/CreateChannelModal";
+import BrowseChannelsModal from "./components/channels/BrowseChannelsModal";
 import { fetchMe, verifyLogin } from "./features/general/generalSlice";
 import { useTheme } from "./theme/themeContext";
 import useRealtimeSync from "./features/realtime/useRealtimeSync";
@@ -127,18 +133,47 @@ function App() {
   const activeDirect = activeDirectId
     ? sortedConversations.find((c) => c.member.id === activeDirectId)
     : null;
-  const channel = activeDirectId
-    ? {
-        key: "dm",
-        member: activeDirect?.member,
-        label: activeDirect?.member.name || "Direct message",
-        description: "Direct message · only visible to the two of you"
-      }
-    : CHANNELS.find((c) => c.key === activeChannel);
+  // Channels beyond #general ("ch:<id>")
+  const channelList = useSelector((state) => state.channels.list);
+  const channelsLoaded = useSelector((state) => state.channels.listLoaded);
+  const unseenChannels = useSelector((state) => state.channels.unseen);
+  const joinedChannels = channelList.filter((c) => c.joined);
+  const activeChannelId = activeChannel.startsWith("ch:") ? activeChannel.slice(3) : null;
+  const activeChannelInfo = activeChannelId
+    ? channelList.find((c) => c.id === activeChannelId)
+    : null;
+
+  // Everyone in the workspace (for channel members and @mentions)
+  const generalMembers = useSelector((state) => state.general.members);
+  const people = generalMembers.length
+    ? generalMembers.filter((m) => m.status === "joined")
+    : [directMe, ...sortedConversations.map((c) => c.member)].filter(Boolean);
+
+  let channel = CHANNELS.find((c) => c.key === activeChannel);
+  if (activeDirectId) {
+    channel = {
+      key: "dm",
+      member: activeDirect?.member,
+      label: activeDirect?.member.name || "Direct message",
+      description: "Direct message · only visible to the two of you"
+    };
+  } else if (activeChannelId) {
+    channel = {
+      key: "channel",
+      private: activeChannelInfo?.private,
+      label: activeChannelInfo?.name || "channel",
+      description:
+        activeChannelInfo?.topic ||
+        (activeChannelInfo?.private ? "Private channel" : "Public channel")
+    };
+  }
 
   useEffect(() => {
     if (!currentMemberId) return undefined;
-    const load = () => dispatch(fetchConversations());
+    const load = () => {
+      dispatch(fetchConversations());
+      dispatch(fetchChannels());
+    };
     load();
     const timer = setInterval(load, DIRECT_POLL_INTERVAL_MS);
     return () => clearInterval(timer);
@@ -211,7 +246,14 @@ function App() {
   }, [dispatch, loginToken, hasSession, authChecked]);
 
   // Picking a channel on a phone closes the sidebar, like Slack's mobile app
+  const [browseOpen, setBrowseOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+
   function openChannel(key) {
+    if (key === "channels:add") {
+      setBrowseOpen(true);
+      return;
+    }
     setActiveChannel(key);
     if (isMobile) setSiderCollapsed(true);
   }
@@ -358,7 +400,48 @@ function App() {
             background: "transparent",
             borderRight: "none"
           }}
-          items={CHANNELS.map((c) => ({
+          items={[
+            ...CHANNELS.filter((c) => c.key !== "settings"),
+            ...joinedChannels.map((c) => ({ key: `ch:${c.id}`, channelInfo: c })),
+            ...(directMe ? [{ key: "channels:add" }] : []),
+            ...CHANNELS.filter((c) => c.key === "settings")
+          ].map((c) => {
+            if (c.key === "channels:add") {
+              return {
+                key: c.key,
+                icon: <PlusOutlined />,
+                label: <span style={{ opacity: 0.8 }}>Add channels</span>
+              };
+            }
+            if (c.channelInfo) {
+              const unseen = unseenChannels[c.channelInfo.id] || 0;
+              return {
+                key: c.key,
+                icon: c.channelInfo.private ? <LockOutlined /> : <NumberOutlined />,
+                label: (
+                  <span
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "6px"
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontWeight: unseen ? 700 : undefined,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis"
+                      }}
+                    >
+                      {c.channelInfo.name}
+                    </span>
+                    {unseen > 0 && <Badge count={unseen} size="small" />}
+                  </span>
+                )
+              };
+            }
+            return {
             key: c.key,
             icon: c.key === "settings" ? <SettingOutlined /> : <NumberOutlined />,
             label:
@@ -385,7 +468,8 @@ function App() {
               ) : (
                 c.label
               )
-          }))}
+            };
+          })}
         />
 
         <div
@@ -506,7 +590,10 @@ function App() {
               {channel.key === "dm" && channel.member && (
                 <MemberAvatar member={channel.member} size={24} />
               )}
-              {channel.key !== "settings" && channel.key !== "dm" && (
+              {channel.key === "channel" && channel.private && (
+                <LockOutlined style={{ color: "var(--text-secondary)", fontSize: "16px" }} />
+              )}
+              {channel.key !== "settings" && channel.key !== "dm" && !channel.private && (
                 <NumberOutlined style={{ color: "var(--text-secondary)", fontSize: "16px" }} />
               )}
               {channel.label}
@@ -601,6 +688,35 @@ function App() {
               <div style={{ textAlign: "center", color: "var(--text-secondary)", marginTop: "40px" }}>
                 {directMe ? (
                   "This person isn't in the workspace anymore."
+                ) : (
+                  <Spin />
+                )}
+              </div>
+            ))}
+
+          {activeChannelId &&
+            (activeChannelInfo && directMe ? (
+              <ChannelView
+                key={activeChannelId}
+                channel={activeChannelInfo}
+                me={directMe}
+                people={people}
+                onLeft={(left) => {
+                  // Private channels disappear once you leave; go back to #general
+                  if (left.private || !channelList.some((c) => c.id === left.id)) {
+                    setActiveChannel("general");
+                  }
+                }}
+              />
+            ) : (
+              <div style={{ textAlign: "center", color: "var(--text-secondary)", marginTop: "40px" }}>
+                {directMe && channelsLoaded ? (
+                  <>
+                    This channel isn&apos;t available anymore.{" "}
+                    <Button type="link" onClick={() => setActiveChannel("general")}>
+                      Go to #general
+                    </Button>
+                  </>
                 ) : (
                   <Spin />
                 )}
@@ -890,6 +1006,24 @@ function App() {
       </Layout>
 
       <HuddlePanel huddle={huddle} />
+
+      <BrowseChannelsModal
+        open={browseOpen}
+        onClose={() => setBrowseOpen(false)}
+        onOpenChannel={(id) => {
+          setBrowseOpen(false);
+          openChannel(`ch:${id}`);
+        }}
+        onCreate={() => {
+          setBrowseOpen(false);
+          setCreateOpen(true);
+        }}
+      />
+      <CreateChannelModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={(created) => openChannel(`ch:${created.id}`)}
+      />
     </Layout>
   );
 }

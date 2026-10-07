@@ -19,6 +19,8 @@ const { FRONTEND_URL } = require("./config");
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const BOT_MENTION_PATTERN = /@(ai|slack ai)\b/i;
 const BOT_NAME = "Slack AI";
+// #general is stored as the channel "general" (see channels.js)
+const GENERAL_SCOPE = { channel: "general" };
 
 // Workspace roles: the member who created the workspace is its owner and is
 // the only one who can remove people. Everyone invited is a member.
@@ -107,6 +109,7 @@ function removalError(requester, member) {
 async function addMessage(message) {
   const fullMessage = {
     id: newId(),
+    channel: "general",
     createdAt: new Date().toISOString(),
     ...message
   };
@@ -163,10 +166,13 @@ function escapeHtml(text) {
   return text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
-async function replyAsBot(getAIResponse) {
+async function replyAsBot(
+  getAIResponse,
+  { channelId = "general", channelName = "general", post = addMessage } = {}
+) {
   const latest = await collections
     .messages()
-    .find({ type: { $ne: "system" }, deleted: { $ne: true } }, NO_MONGO_ID)
+    .find({ channel: channelId, type: { $ne: "system" }, deleted: { $ne: true } }, NO_MONGO_ID)
     .sort({ createdAt: -1 })
     .limit(AI_CONTEXT_LENGTH)
     .toArray();
@@ -184,7 +190,7 @@ async function replyAsBot(getAIResponse) {
       {
         role: "system",
         content:
-          "You are Slack AI, an assistant in the #general channel of a team workspace. Several teammates talk here; each user message is prefixed with the sender's name. Reply to whoever mentioned you, concisely and in a friendly tone."
+          `You are Slack AI, an assistant in the #${channelName} channel of a team workspace. Several teammates talk here; each user message is prefixed with the sender's name. Reply to whoever mentioned you, concisely and in a friendly tone.`
       },
       ...recent
     ]);
@@ -194,7 +200,7 @@ async function replyAsBot(getAIResponse) {
     text = "Sorry, I couldn't come up with a reply right now. Please try again!";
   }
 
-  await addMessage({ type: "bot", author: BOT_NAME, text });
+  await post({ type: "bot", author: BOT_NAME, text });
 }
 
 // An invited person proved they own the email (invite or sign-in link)
@@ -236,7 +242,7 @@ function createGeneralRouter({ getAIResponse, requireMember, createSession }) {
   router.get("/state", requireMember, async (req, res) => {
     const [members, page, settings] = await Promise.all([
       listMembers(),
-      pageMessages(collections.messages(), {}),
+      pageMessages(collections.messages(), GENERAL_SCOPE),
       getSettings()
     ]);
     res.json({
@@ -376,8 +382,9 @@ function createGeneralRouter({ getAIResponse, requireMember, createSession }) {
     }
 
     await collections.members().deleteOne({ id: member.id });
-    // Removed people are signed out everywhere
+    // Removed people are signed out everywhere and leave every channel
     await collections.sessions().deleteMany({ memberId: member.id });
+    await collections.channels().updateMany({}, { $pull: { members: member.id } });
 
     if (member.status === "invited") {
       await addSystemMessage(`${requester.name} revoked the invite for ${member.email}`);
@@ -435,7 +442,7 @@ function createGeneralRouter({ getAIResponse, requireMember, createSession }) {
 
   // Older history: the page of messages before ?before=<createdAt>
   router.get("/messages", requireMember, async (req, res) => {
-    res.json(await pageMessages(collections.messages(), {}, req.query.before));
+    res.json(await pageMessages(collections.messages(), GENERAL_SCOPE, req.query.before));
   });
 
   // Edits, deletes and reactions are pushed to everyone right away
@@ -447,7 +454,7 @@ function createGeneralRouter({ getAIResponse, requireMember, createSession }) {
   router.patch("/messages/:id", requireMember, async (req, res) => {
     const result = await editMessage(
       collections.messages(),
-      {},
+      GENERAL_SCOPE,
       req.params.id,
       req.member,
       req.body.text
@@ -459,7 +466,7 @@ function createGeneralRouter({ getAIResponse, requireMember, createSession }) {
   router.delete("/messages/:id", requireMember, async (req, res) => {
     const result = await deleteMessage(
       collections.messages(),
-      {},
+      GENERAL_SCOPE,
       req.params.id,
       req.member,
       req.member.role === ROLE_OWNER
@@ -470,7 +477,7 @@ function createGeneralRouter({ getAIResponse, requireMember, createSession }) {
   router.post("/messages/:id/reactions", requireMember, async (req, res) => {
     const result = await toggleReaction(
       collections.messages(),
-      {},
+      GENERAL_SCOPE,
       req.params.id,
       req.member,
       req.body.emoji
@@ -486,6 +493,7 @@ module.exports = {
   findJoinedMember,
   listJoinedMembers,
   addSystemMessage,
+  replyAsBot,
   findMemberByEmail,
   activateMember,
   createOwner,

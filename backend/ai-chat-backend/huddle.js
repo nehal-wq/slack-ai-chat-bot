@@ -29,7 +29,14 @@ function formatDuration(ms) {
 
 function attachHuddleServer(
   server,
-  { findJoinedMember, memberFromToken, addSystemMessage, addDirectSystemMessage, isAllowedOrigin }
+  {
+    findJoinedMember,
+    memberFromToken,
+    addSystemMessage,
+    addDirectSystemMessage,
+    channelAudience,
+    isAllowedOrigin
+  }
 ) {
   const wss = new WebSocketServer({ server, path: "/ws/huddle" });
 
@@ -276,7 +283,7 @@ function attachHuddleServer(
         break;
       }
       case "typing":
-        relayTyping(socket, current, message);
+        await relayTyping(socket, current, message);
         break;
       default:
         break;
@@ -300,7 +307,7 @@ function attachHuddleServer(
 
   // "#general: Priya is typing" goes to everyone else; DM typing only to the
   // other person. Throttled so a fast typist doesn't flood the server.
-  function relayTyping(socket, member, message) {
+  async function relayTyping(socket, member, message) {
     // Throttled per conversation, so #general typing never hides DM typing
     const key = message.target === "dm" ? `dm:${message.to}` : message.target;
     socket.lastTypingAt ??= new Map();
@@ -313,7 +320,33 @@ function attachHuddleServer(
       }
     } else if (message.target === "dm" && typeof message.to === "string") {
       for (const client of socketsOf(message.to)) send(client, event);
+    } else if (message.target === "channel" && typeof message.to === "string") {
+      // Only channel members may signal; private channels only reach members
+      const allowed = await channelAudience(message.to, member.id);
+      if (!allowed) return;
+      sendToAudience(allowed.audience, { ...event, channel: message.to }, member.id);
     }
+  }
+
+  // audience null = every signed-in member, else only these member ids
+  function sendToAudience(audience, event, exceptMemberId) {
+    for (const client of signedInClients()) {
+      if (client.memberId === exceptMemberId) continue;
+      if (audience && !audience.includes(client.memberId)) continue;
+      send(client, event);
+    }
+  }
+
+  function onChannelMessage({ channelId, message, audience }) {
+    sendToAudience(audience, { type: "channel:message", channelId, message });
+  }
+
+  function onChannelMessageUpdated({ channelId, message, audience }) {
+    sendToAudience(audience, { type: "channel:messageUpdated", channelId, message });
+  }
+
+  function onChannelsChanged({ audience }) {
+    sendToAudience(audience, { type: "channels:changed" });
   }
 
   function onGeneralMessage(message) {
@@ -362,6 +395,9 @@ function attachHuddleServer(
   bus.on("dm:message", onDirectMessage);
   bus.on("general:messageUpdated", onGeneralMessageUpdated);
   bus.on("dm:messageUpdated", onDirectMessageUpdated);
+  bus.on("channel:message", onChannelMessage);
+  bus.on("channel:messageUpdated", onChannelMessageUpdated);
+  bus.on("channels:changed", onChannelsChanged);
 
   async function authenticate(socket, req) {
     // Only pages served from our own frontend may open call connections
@@ -430,6 +466,9 @@ function attachHuddleServer(
     bus.off("dm:message", onDirectMessage);
     bus.off("general:messageUpdated", onGeneralMessageUpdated);
     bus.off("dm:messageUpdated", onDirectMessageUpdated);
+    bus.off("channel:message", onChannelMessage);
+    bus.off("channel:messageUpdated", onChannelMessageUpdated);
+    bus.off("channels:changed", onChannelsChanged);
   });
 
   return wss;
