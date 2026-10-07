@@ -2,11 +2,17 @@ const express = require("express");
 const crypto = require("crypto");
 const { collections, NO_MONGO_ID } = require("./db");
 const { bus } = require("./events");
+const {
+  pageMessages,
+  editMessage,
+  deleteMessage,
+  toggleReaction,
+  respond
+} = require("./messages");
 
 // Direct (1:1) messages between #general members, stored in MongoDB
 // (collections: directMessages, directReads).
 
-const MESSAGES_PER_FETCH = 200;
 
 // Same key no matter who is "a" and who is "b"
 function conversationKey(a, b) {
@@ -94,13 +100,54 @@ function createDirectRouter({ findJoinedMember, listJoinedMembers, requireMember
   router.get("/:otherId/messages", async (req, res) => {
     const pair = await resolvePair(req, res);
     if (!pair) return;
-    const latest = await collections
-      .directMessages()
-      .find({ conversation: pair.key }, NO_MONGO_ID)
-      .sort({ createdAt: -1 })
-      .limit(MESSAGES_PER_FETCH)
-      .toArray();
-    res.json({ messages: latest.reverse() });
+    // Latest page, or the page before ?before=<createdAt> for older history
+    res.json(
+      await pageMessages(collections.directMessages(), { conversation: pair.key }, req.query.before)
+    );
+  });
+
+  // Edits, deletes and reactions are pushed to both people right away
+  const announce = (res, pair) => (message) => {
+    bus.emit("dm:messageUpdated", { members: [pair.me.id, pair.other.id], message });
+    res.json({ message });
+  };
+
+  router.patch("/:otherId/messages/:id", async (req, res) => {
+    const pair = await resolvePair(req, res);
+    if (!pair) return;
+    const result = await editMessage(
+      collections.directMessages(),
+      { conversation: pair.key },
+      req.params.id,
+      pair.me,
+      req.body.text
+    );
+    respond(res, result, announce(res, pair));
+  });
+
+  router.delete("/:otherId/messages/:id", async (req, res) => {
+    const pair = await resolvePair(req, res);
+    if (!pair) return;
+    const result = await deleteMessage(
+      collections.directMessages(),
+      { conversation: pair.key },
+      req.params.id,
+      pair.me
+    );
+    respond(res, result, announce(res, pair));
+  });
+
+  router.post("/:otherId/messages/:id/reactions", async (req, res) => {
+    const pair = await resolvePair(req, res);
+    if (!pair) return;
+    const result = await toggleReaction(
+      collections.directMessages(),
+      { conversation: pair.key },
+      req.params.id,
+      pair.me,
+      req.body.emoji
+    );
+    respond(res, result, announce(res, pair));
   });
 
   router.post("/:otherId/messages", async (req, res) => {

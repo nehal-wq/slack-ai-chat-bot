@@ -8,6 +8,12 @@ import {
   setSessionToken,
   SESSION_EXPIRED
 } from "../auth/session";
+import {
+  mergeLatest,
+  hasOlderThan,
+  prependOlder,
+  replaceMessage
+} from "../messages/mergeMessages";
 
 function apiThunk(type, callApi) {
   return createAsyncThunk(`general/${type}`, async (arg, { rejectWithValue }) => {
@@ -84,6 +90,23 @@ export const updateSettings = apiThunk("updateSettings", (changes) =>
   apiRequest("/general/settings", { method: "PATCH", body: changes })
 );
 
+// The page of messages before the oldest one loaded
+export const fetchOlderGeneral = apiThunk("fetchOlder", (before) =>
+  apiRequest(`/general/messages?before=${encodeURIComponent(before)}`)
+);
+
+export const editGeneralMessage = apiThunk("editMessage", ({ id, text }) =>
+  apiRequest(`/general/messages/${id}`, { method: "PATCH", body: { text } })
+);
+
+export const deleteGeneralMessage = apiThunk("deleteMessage", (id) =>
+  apiRequest(`/general/messages/${id}`, { method: "DELETE" })
+);
+
+export const reactGeneralMessage = apiThunk("react", ({ id, emoji }) =>
+  apiRequest(`/general/messages/${id}/reactions`, { method: "POST", body: { emoji } })
+);
+
 export const postGeneralMessage = apiThunk("postMessage", ({ text }) =>
   apiRequest("/general/messages", { method: "POST", body: { text } })
 );
@@ -104,7 +127,10 @@ const initialState = {
   // Pushed over the realtime connection
   online: [],
   // #general messages that arrived while you weren't looking at #general
-  unseenCount: 0
+  unseenCount: 0,
+  // Older history exists beyond what's loaded
+  hasMore: false,
+  loadingOlder: false
 };
 
 function addMemberToState(state, member) {
@@ -139,6 +165,9 @@ const generalSlice = createSlice({
   name: "general",
   initialState,
   reducers: {
+    generalMessageUpdated: (state, action) => {
+      replaceMessage(state.messages, action.payload);
+    },
     generalMessageReceived: (state, action) => {
       const message = action.payload;
       if (!state.messages.some((m) => m.id === message.id)) {
@@ -177,9 +206,23 @@ const generalSlice = createSlice({
         signedOut(state);
         state.sessionExpired = false;
       })
+      .addCase(fetchOlderGeneral.pending, (state) => {
+        state.loadingOlder = true;
+      })
+      .addCase(fetchOlderGeneral.fulfilled, (state, action) => {
+        state.loadingOlder = false;
+        state.messages = prependOlder(state.messages, action.payload.messages);
+        state.hasMore = action.payload.hasMore;
+      })
+      .addCase(fetchOlderGeneral.rejected, (state) => {
+        state.loadingOlder = false;
+      })
       .addCase(fetchGeneral.fulfilled, (state, action) => {
         state.members = action.payload.members;
-        state.messages = action.payload.messages;
+        const { messages, hasMore } = action.payload;
+        // Keep "hasMore" from paging if older history was already loaded
+        if (!hasOlderThan(state.messages, messages)) state.hasMore = hasMore;
+        state.messages = mergeLatest(state.messages, messages);
         state.emailEnabled = action.payload.emailEnabled;
         state.settings = action.payload.settings;
         state.loaded = true;
@@ -215,6 +258,15 @@ const generalSlice = createSlice({
           state.messages.push(message);
         }
       })
+      .addMatcher(
+        (action) =>
+          [editGeneralMessage, deleteGeneralMessage, reactGeneralMessage].some((thunk) =>
+            thunk.fulfilled.match(action)
+          ),
+        (state, action) => {
+          replaceMessage(state.messages, action.payload.message);
+        }
+      )
       // Any request (here or in DMs) that finds the session invalid signs out
       .addMatcher(
         (action) => action.type.endsWith("/rejected") && action.payload === SESSION_EXPIRED,
@@ -226,7 +278,12 @@ const generalSlice = createSlice({
   }
 });
 
-export const { generalMessageReceived, presenceChanged, generalUnseenAdded, generalSeen } =
-  generalSlice.actions;
+export const {
+  generalMessageReceived,
+  generalMessageUpdated,
+  presenceChanged,
+  generalUnseenAdded,
+  generalSeen
+} = generalSlice.actions;
 
 export default generalSlice.reducer;

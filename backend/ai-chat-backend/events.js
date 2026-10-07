@@ -7,6 +7,8 @@ const { EventEmitter } = require("events");
 //   "general:message"  (message)                 new #general message
 //   "general:changed"  ()                         members/roles/settings changed
 //   "dm:message"       ({ members: [a, b], message })  new direct message
+//   "general:messageUpdated" (message)          edited/deleted/reacted #general message
+//   "dm:messageUpdated" ({ members: [a, b], message })  same for a direct message
 
 const bus = new EventEmitter();
 bus.setMaxListeners(50);

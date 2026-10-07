@@ -20,6 +20,7 @@
   --sidebar: #3f0e40;
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05);
   --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.06);
+  --mention-me-bg: #fff1c2;
   color-scheme: light;
 }
 
@@ -42,6 +43,7 @@
   --sidebar: #19171d;
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.45);
+  --mention-me-bg: #5c4813;
   color-scheme: dark;
 }
 
@@ -64,6 +66,24 @@ body {
 .ant-layout-sider-children {
   overflow-x: hidden;
   overflow-y: auto;
+}
+
+/* Message hover toolbar (react / edit / delete). Always visible on touch
+   screens, where there is no hover. */
+.message-item .message-actions {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.message-item:hover .message-actions,
+.message-item:focus-within .message-actions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .message-item .message-actions {
+    opacity: 1;
+  }
 }
 
 /* Suggested prompts on the #ai-assistant welcome card */

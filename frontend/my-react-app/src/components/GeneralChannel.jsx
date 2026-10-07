@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { Avatar, Button, Input, Tag, Alert, Spin, Tooltip } from "antd";
+import { Avatar, Button, Alert, Spin, Tooltip } from "antd";
 import {
-  SendOutlined,
   UserAddOutlined,
   TeamOutlined,
   RobotOutlined,
@@ -12,8 +11,14 @@ import {
 import { useSelector, useDispatch } from "react-redux";
 import {
   fetchGeneral,
-  postGeneralMessage
+  fetchOlderGeneral,
+  postGeneralMessage,
+  editGeneralMessage,
+  deleteGeneralMessage,
+  reactGeneralMessage
 } from "../features/general/generalSlice";
+import MessageItem from "./messages/MessageItem";
+import Composer from "./messages/Composer";
 import MemberAvatar from "./general/MemberAvatar";
 import { notifyTyping, useTypingNames, typingLabel } from "../features/realtime/useTyping";
 import formatMessageTime from "./general/formatMessageTime";
@@ -35,80 +40,26 @@ function isAwaitingBot(messages) {
   return false;
 }
 
-function MessageRow({ message, member, isYou }) {
-  if (message.type === "system") {
-    return (
-      <div
-        style={{
-          textAlign: "center",
-          fontSize: "12px",
-          color: "var(--text-tertiary)",
-          margin: "10px 0"
-        }}
-      >
-        {message.text} · {formatMessageTime(message.createdAt)}
-      </div>
-    );
-  }
-
-  const isBot = message.type === "bot";
-  // Fall back to the stored author name if the member has since left
-  const avatarMember = member || { id: message.memberId, name: message.author };
-
+function SystemNotice({ message }) {
   return (
     <div
       style={{
-        padding: "10px 16px",
-        marginBottom: "6px",
-        borderRadius: "8px",
-        background: "var(--surface)",
-        boxShadow: "var(--shadow-sm)",
-        display: "flex",
-        alignItems: "flex-start",
-        gap: "14px"
+        textAlign: "center",
+        fontSize: "12px",
+        color: "var(--text-tertiary)",
+        margin: "10px 0"
       }}
     >
-      <MemberAvatar member={avatarMember} bot={isBot} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            marginBottom: "2px"
-          }}
-        >
-          <span style={{ fontWeight: 700, color: "var(--text)", fontSize: "14px" }}>
-            {member?.name || message.author}
-          </span>
-          {isBot && (
-            <Tag
-              color="purple"
-              style={{ fontSize: "11px", padding: "0 4px", lineHeight: "18px" }}
-            >
-              APP
-            </Tag>
-          )}
-          {isYou && <Tag color="blue" style={{ fontSize: "11px", lineHeight: "18px" }}>you</Tag>}
-          <span style={{ fontSize: "12px", color: "var(--text-tertiary)" }}>
-            {formatMessageTime(message.createdAt)}
-          </span>
-        </div>
-        <div
-          style={{
-            fontSize: "14px",
-            lineHeight: "1.6",
-            color: "var(--text)",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word"
-          }}
-        >
-          {message.text}
-        </div>
-      </div>
+      {message.text} · {formatMessageTime(message.createdAt)}
     </div>
   );
 }
+
+// Extra @mentions offered in #general besides people
+const GENERAL_MENTIONS = [
+  { value: "ai", description: "ask the AI bot" },
+  { value: "channel", description: "notify everyone in #general" }
+];
 
 function GeneralChannel({ inviteToken, onInviteHandled, huddle }) {
   const dispatch = useDispatch();
@@ -125,9 +76,9 @@ function GeneralChannel({ inviteToken, onInviteHandled, huddle }) {
     settings
   } = useSelector((state) => state.general);
 
-  const [input, setInput] = useState("");
-  const [sending, setSending] = useState(false);
-  const [sendError, setSendError] = useState(null);
+  const [actionError, setActionError] = useState(null);
+  const { hasMore, loadingOlder } = useSelector((state) => state.general);
+  const feedRef = useRef(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
   const messagesEndRef = useRef(null);
@@ -138,6 +89,9 @@ function GeneralChannel({ inviteToken, onInviteHandled, huddle }) {
   const joinedMembers = members.filter((m) => m.status === "joined");
   const pendingCount = members.length - joinedMembers.length;
   const membersById = Object.fromEntries(members.map((m) => [m.id, m]));
+  const mentionNames = joinedMembers.map((m) => m.name);
+  const nameOf = (id) => membersById[id]?.name || "Someone";
+  const lastMessageId = messages[messages.length - 1]?.id;
   const botTyping = isAwaitingBot(messages);
   const typingText = typingLabel(useTypingNames("general"));
 
@@ -167,22 +121,27 @@ function GeneralChannel({ inviteToken, onInviteHandled, huddle }) {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, botTyping]);
+  }, [lastMessageId, botTyping]);
 
-  async function handleSend() {
-    const text = input.trim();
-    if (!text || !currentMember || sending) return;
-
-    setSending(true);
-    setSendError(null);
+  // Runs a message action and shows any error above the composer
+  async function run(action) {
+    setActionError(null);
     try {
-      await dispatch(postGeneralMessage({ text })).unwrap();
-      setInput("");
+      await dispatch(action).unwrap();
     } catch (err) {
-      setSendError(err);
-    } finally {
-      setSending(false);
+      setActionError(err);
+      throw err;
     }
+  }
+
+  // Prepends older history without making the view jump
+  async function loadOlder() {
+    const feed = feedRef.current;
+    const previousHeight = feed?.scrollHeight || 0;
+    await run(fetchOlderGeneral(messages[0].createdAt)).catch(() => {});
+    requestAnimationFrame(() => {
+      if (feed) feed.scrollTop += feed.scrollHeight - previousHeight;
+    });
   }
 
   // A signed-in member must not be asked to sign in while their session is
@@ -309,7 +268,15 @@ function GeneralChannel({ inviteToken, onInviteHandled, huddle }) {
       )}
 
       {/* Message feed */}
-      <div style={{ flex: 1, overflowY: "auto", paddingRight: "8px" }}>
+      <div ref={feedRef} style={{ flex: 1, overflowY: "auto", paddingRight: "8px", paddingTop: "14px" }}>
+        {loaded && hasMore && messages.length > 0 && (
+          <div style={{ textAlign: "center", margin: "4px 0 12px" }}>
+            <Button size="small" loading={loadingOlder} onClick={loadOlder}>
+              Load older messages
+            </Button>
+          </div>
+        )}
+
         {signedOut && (
           <div
             style={{
@@ -360,14 +327,35 @@ function GeneralChannel({ inviteToken, onInviteHandled, huddle }) {
           </div>
         )}
 
-        {messages.map((message) => (
-          <MessageRow
-            key={message.id}
-            message={message}
-            member={membersById[message.memberId]}
-            isYou={Boolean(currentMember) && message.memberId === currentMember.id}
-          />
-        ))}
+        {messages.map((message) => {
+          if (message.type === "system") return <SystemNotice key={message.id} message={message} />;
+          const isBot = message.type === "bot";
+          const isYou = Boolean(currentMember) && message.memberId === currentMember.id;
+          const isOwner = currentMember?.role === "owner";
+          // Fall back to the stored author name if the member has since left
+          const author = membersById[message.memberId] || {
+            id: message.memberId || message.author,
+            name: message.author
+          };
+          return (
+            <MessageItem
+              key={message.id}
+              message={message}
+              author={author}
+              isBot={isBot}
+              isYou={isYou}
+              canEdit={isYou && !isBot}
+              canDelete={isYou || isOwner}
+              myId={currentMemberId}
+              myName={currentMember?.name}
+              mentionNames={mentionNames}
+              nameOf={nameOf}
+              onEdit={(text) => run(editGeneralMessage({ id: message.id, text }))}
+              onDelete={() => run(deleteGeneralMessage(message.id)).catch(() => {})}
+              onReact={(emoji) => run(reactGeneralMessage({ id: message.id, emoji })).catch(() => {})}
+            />
+          );
+        })}
 
         {botTyping && (
           <div
@@ -429,56 +417,23 @@ function GeneralChannel({ inviteToken, onInviteHandled, huddle }) {
         />
       ) : !restoringSession && (
         <>
-          {sendError && (
+          {actionError && (
             <Alert
               type="error"
               showIcon
-              title={sendError}
+              title={actionError}
               closable
-              onClose={() => setSendError(null)}
+              onClose={() => setActionError(null)}
               style={{ marginTop: "12px" }}
             />
           )}
-          <div
-            style={{
-              marginTop: "16px",
-              padding: "12px",
-              background: "var(--surface)",
-              border: "1px solid var(--border-strong)",
-              borderRadius: "10px",
-              boxShadow: "var(--shadow-md)",
-              display: "flex",
-              gap: "12px",
-              alignItems: "center"
-            }}
-          >
-            <Input
-              variant="borderless"
-              placeholder={`Message #general as ${currentMember.name} — mention @ai to ask the bot`}
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                if (e.target.value) notifyTyping("general");
-              }}
-              onPressEnter={handleSend}
-              style={{ fontSize: "14px", flex: 1 }}
-            />
-            <Button
-              type="primary"
-              icon={<SendOutlined />}
-              onClick={handleSend}
-              loading={sending}
-              disabled={input.trim() === ""}
-              style={{
-                background: "#007A5A",
-                borderColor: "#007A5A",
-                fontWeight: 600,
-                borderRadius: "6px"
-              }}
-            >
-              Send
-            </Button>
-          </div>
+          <Composer
+            placeholder={`Message #general as ${currentMember.name} — @mention people, or @ai to ask the bot`}
+            people={joinedMembers.filter((m) => m.id !== currentMemberId)}
+            extraMentions={GENERAL_MENTIONS}
+            onTyping={() => notifyTyping("general")}
+            onSend={(text) => run(postGeneralMessage({ text }))}
+          />
         </>
       )}
 

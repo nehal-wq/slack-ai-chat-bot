@@ -4,11 +4,16 @@ import { subscribe } from "./realtimeBus";
 import {
   fetchGeneral,
   generalMessageReceived,
+  generalMessageUpdated,
   presenceChanged,
   generalUnseenAdded,
   generalSeen
 } from "../general/generalSlice";
-import { fetchConversations, directMessageReceived } from "../direct/directSlice";
+import {
+  fetchConversations,
+  directMessageReceived,
+  directMessageUpdated
+} from "../direct/directSlice";
 import { showNotification } from "../notifications/notify";
 
 const APP_TITLE = "Slack AI Workspace";
@@ -73,6 +78,13 @@ function useRealtimeSync({ currentMemberId, myName, activeChannel, openChannel }
           });
         }
       }),
+      // Someone edited, deleted or reacted to a message
+      subscribe("general:messageUpdated", ({ message }) =>
+        dispatch(generalMessageUpdated(message))
+      ),
+      subscribe("dm:messageUpdated", ({ message, members }) =>
+        dispatch(directMessageUpdated({ message, members, myId: currentMemberId }))
+      ),
       subscribe("presence", ({ online }) => dispatch(presenceChanged(online))),
       // After (re)connecting, catch up on anything missed while offline
       subscribe("realtime:connected", () => {

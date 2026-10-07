@@ -336,6 +336,19 @@ function attachHuddleServer(
     }
   }
 
+  // Edited/deleted/reacted messages replace the copy browsers already have
+  function onGeneralMessageUpdated(message) {
+    const event = { type: "general:messageUpdated", message };
+    for (const client of signedInClients()) send(client, event);
+  }
+
+  function onDirectMessageUpdated({ members, message }) {
+    const event = { type: "dm:messageUpdated", members, message };
+    for (const memberId of members) {
+      for (const client of socketsOf(memberId)) send(client, event);
+    }
+  }
+
   function onDirectMessage({ members, message }) {
     const event = { type: "dm:message", members, message };
     for (const memberId of members) {
@@ -347,6 +360,8 @@ function attachHuddleServer(
   bus.on("general:message", onGeneralMessage);
   bus.on("general:changed", onChanged);
   bus.on("dm:message", onDirectMessage);
+  bus.on("general:messageUpdated", onGeneralMessageUpdated);
+  bus.on("dm:messageUpdated", onDirectMessageUpdated);
 
   async function authenticate(socket, req) {
     // Only pages served from our own frontend may open call connections
@@ -413,6 +428,8 @@ function attachHuddleServer(
     bus.off("general:message", onGeneralMessage);
     bus.off("general:changed", onChanged);
     bus.off("dm:message", onDirectMessage);
+    bus.off("general:messageUpdated", onGeneralMessageUpdated);
+    bus.off("dm:messageUpdated", onDirectMessageUpdated);
   });
 
   return wss;

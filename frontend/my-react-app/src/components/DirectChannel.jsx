@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { Button, Input, Alert, Spin, Tooltip, Tag } from "antd";
+import { Button, Alert, Spin, Tooltip, Tag } from "antd";
 import {
-  SendOutlined,
   AudioOutlined,
   VideoCameraOutlined,
   PhoneOutlined
@@ -9,9 +8,15 @@ import {
 import { useSelector, useDispatch } from "react-redux";
 import {
   fetchDirectMessages,
+  fetchOlderDirect,
   sendDirectMessage,
-  markDirectRead
+  markDirectRead,
+  editDirectMessage,
+  deleteDirectMessage,
+  reactDirectMessage
 } from "../features/direct/directSlice";
+import MessageItem from "./messages/MessageItem";
+import Composer from "./messages/Composer";
 import { directRoomId } from "../features/huddle/useHuddle";
 import MemberAvatar from "./general/MemberAvatar";
 import { notifyTyping, useTypingNames, typingLabel } from "../features/realtime/useTyping";
@@ -21,58 +26,18 @@ import formatMessageTime from "./general/formatMessageTime";
 const POLL_INTERVAL_MS = 30000;
 const EMPTY_LIST = [];
 
-function DirectMessageRow({ message, author, isYou }) {
-  if (message.type === "system") {
-    return (
-      <div
-        style={{
-          textAlign: "center",
-          fontSize: "12px",
-          color: "var(--text-tertiary)",
-          margin: "10px 0"
-        }}
-      >
-        {message.text} · {formatMessageTime(message.createdAt)}
-      </div>
-    );
-  }
-
+// Call events ("Missed call", "Call ended · 3m") shown between messages
+function CallNotice({ message }) {
   return (
     <div
       style={{
-        padding: "10px 16px",
-        marginBottom: "6px",
-        borderRadius: "8px",
-        background: "var(--surface)",
-        boxShadow: "var(--shadow-sm)",
-        display: "flex",
-        alignItems: "flex-start",
-        gap: "14px"
+        textAlign: "center",
+        fontSize: "12px",
+        color: "var(--text-tertiary)",
+        margin: "10px 0"
       }}
     >
-      <MemberAvatar member={author} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "2px" }}>
-          <span style={{ fontWeight: 700, color: "var(--text)", fontSize: "14px" }}>
-            {author.name}
-          </span>
-          {isYou && <Tag color="blue" style={{ fontSize: "11px", lineHeight: "18px" }}>you</Tag>}
-          <span style={{ fontSize: "12px", color: "var(--text-tertiary)" }}>
-            {formatMessageTime(message.createdAt)}
-          </span>
-        </div>
-        <div
-          style={{
-            fontSize: "14px",
-            lineHeight: "1.6",
-            color: "var(--text)",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word"
-          }}
-        >
-          {message.text}
-        </div>
-      </div>
+      {message.text} · {formatMessageTime(message.createdAt)}
     </div>
   );
 }
@@ -83,10 +48,15 @@ function DirectChannel({ me, other, huddle }) {
     (state) => state.direct.messagesByMember[other.id] || EMPTY_LIST
   );
   const loaded = useSelector((state) => Boolean(state.direct.loadedMembers[other.id]));
-  const [input, setInput] = useState("");
-  const [sending, setSending] = useState(false);
+  const hasMore = useSelector((state) => Boolean(state.direct.hasMoreByMember[other.id]));
+  const loadingOlder = useSelector((state) =>
+    Boolean(state.direct.loadingOlderByMember[other.id])
+  );
   const [error, setError] = useState(null);
   const messagesEndRef = useRef(null);
+  const feedRef = useRef(null);
+  const mentionNames = [me.name, other.name];
+  const nameOf = (id) => (id === other.id ? other.name : me.name);
 
   const room = directRoomId(me.id, other.id);
   const isOnline = useSelector((state) => state.general.online.includes(other.id));
@@ -124,20 +94,27 @@ function DirectChannel({ me, other, huddle }) {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [lastMessageId]);
 
-  async function handleSend() {
-    const text = input.trim();
-    if (!text || sending) return;
-
-    setSending(true);
+  // Runs a message action and shows any error above the feed
+  async function run(action) {
+    setError(null);
     try {
-      await dispatch(sendDirectMessage({ otherId: other.id, text })).unwrap();
-      setInput("");
-      setError(null);
+      await dispatch(action).unwrap();
     } catch (err) {
       setError(err);
-    } finally {
-      setSending(false);
+      throw err;
     }
+  }
+
+  // Prepends older history without making the view jump
+  async function loadOlder() {
+    const feed = feedRef.current;
+    const previousHeight = feed?.scrollHeight || 0;
+    await run(fetchOlderDirect({ otherId: other.id, before: messages[0].createdAt })).catch(
+      () => {}
+    );
+    requestAnimationFrame(() => {
+      if (feed) feed.scrollTop += feed.scrollHeight - previousHeight;
+    });
   }
 
   function startCall(withVideo) {
@@ -258,7 +235,15 @@ function DirectChannel({ me, other, huddle }) {
       )}
 
       {/* Message feed */}
-      <div style={{ flex: 1, overflowY: "auto", paddingRight: "8px" }}>
+      <div ref={feedRef} style={{ flex: 1, overflowY: "auto", paddingRight: "8px", paddingTop: "14px" }}>
+        {loaded && hasMore && messages.length > 0 && (
+          <div style={{ textAlign: "center", margin: "4px 0 12px" }}>
+            <Button size="small" loading={loadingOlder} onClick={loadOlder}>
+              Load older messages
+            </Button>
+          </div>
+        )}
+
         {!loaded && !error && (
           <div style={{ textAlign: "center", marginTop: "40px" }}>
             <Spin />
@@ -289,13 +274,24 @@ function DirectChannel({ me, other, huddle }) {
         )}
 
         {messages.map((message) => {
+          if (message.type === "system") return <CallNotice key={message.id} message={message} />;
           const isYou = message.memberId === me.id;
+          const ids = { otherId: other.id, id: message.id };
           return (
-            <DirectMessageRow
+            <MessageItem
               key={message.id}
               message={message}
               author={isYou ? me : other}
               isYou={isYou}
+              canEdit={isYou}
+              canDelete={isYou}
+              myId={me.id}
+              myName={me.name}
+              mentionNames={mentionNames}
+              nameOf={nameOf}
+              onEdit={(text) => run(editDirectMessage({ ...ids, text }))}
+              onDelete={() => run(deleteDirectMessage(ids)).catch(() => {})}
+              onReact={(emoji) => run(reactDirectMessage({ ...ids, emoji })).catch(() => {})}
             />
           );
         })}
@@ -313,46 +309,12 @@ function DirectChannel({ me, other, huddle }) {
       </div>
 
       {/* Composer */}
-      <div
-        style={{
-          marginTop: "16px",
-          padding: "12px",
-          background: "var(--surface)",
-          border: "1px solid var(--border-strong)",
-          borderRadius: "10px",
-          boxShadow: "var(--shadow-md)",
-          display: "flex",
-          gap: "12px",
-          alignItems: "center"
-        }}
-      >
-        <Input
-          variant="borderless"
-          placeholder={`Message ${other.name}`}
-          value={input}
-          onChange={(e) => {
-            setInput(e.target.value);
-            if (e.target.value) notifyTyping("dm", other.id);
-          }}
-          onPressEnter={handleSend}
-          style={{ fontSize: "14px", flex: 1 }}
-        />
-        <Button
-          type="primary"
-          icon={<SendOutlined />}
-          onClick={handleSend}
-          loading={sending}
-          disabled={input.trim() === ""}
-          style={{
-            background: "#007A5A",
-            borderColor: "#007A5A",
-            fontWeight: 600,
-            borderRadius: "6px"
-          }}
-        >
-          Send
-        </Button>
-      </div>
+      <Composer
+        placeholder={`Message ${other.name}`}
+        people={[other]}
+        onTyping={() => notifyTyping("dm", other.id)}
+        onSend={(text) => run(sendDirectMessage({ otherId: other.id, text }))}
+      />
     </>
   );
 }

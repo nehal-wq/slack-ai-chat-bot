@@ -1,12 +1,13 @@
 import { Avatar } from "antd";
 import { RobotOutlined } from "@ant-design/icons";
 
+// All dark enough for white initials (at least 4.3:1 contrast)
 const AVATAR_COLORS = [
   "#1164A3",
   "#007A5A",
-  "#E8912D",
+  "#B5650F",
   "#CD2553",
-  "#2BAC76",
+  "#2E7D32",
   "#4A154B",
   "#0B7A8A",
   "#8E5A00"

@@ -3,11 +3,17 @@ const crypto = require("crypto");
 const { mailer, sendMail } = require("./mailer");
 const { collections, NO_MONGO_ID } = require("./db");
 const { bus } = require("./events");
+const {
+  pageMessages,
+  editMessage,
+  deleteMessage,
+  toggleReaction,
+  respond
+} = require("./messages");
 
 // #general team channel: members, email invites and messages, stored in
 // MongoDB (collections: members, messages, settings).
 
-const MESSAGES_PER_FETCH = 200;
 const AI_CONTEXT_LENGTH = 15;
 const { FRONTEND_URL } = require("./config");
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -118,16 +124,6 @@ async function addSystemMessage(text) {
   return message;
 }
 
-async function recentMessages(limit) {
-  const latest = await collections
-    .messages()
-    .find({}, NO_MONGO_ID)
-    .sort({ createdAt: -1 })
-    .limit(limit)
-    .toArray();
-  return latest.reverse();
-}
-
 function cleanName(name, email) {
   const trimmed = typeof name === "string" ? name.trim().slice(0, 60) : "";
   return trimmed || email.split("@")[0];
@@ -170,7 +166,7 @@ function escapeHtml(text) {
 async function replyAsBot(getAIResponse) {
   const latest = await collections
     .messages()
-    .find({ type: { $ne: "system" } }, NO_MONGO_ID)
+    .find({ type: { $ne: "system" }, deleted: { $ne: true } }, NO_MONGO_ID)
     .sort({ createdAt: -1 })
     .limit(AI_CONTEXT_LENGTH)
     .toArray();
@@ -238,14 +234,15 @@ function createGeneralRouter({ getAIResponse, requireMember, createSession }) {
   const router = express.Router();
 
   router.get("/state", requireMember, async (req, res) => {
-    const [members, messages, settings] = await Promise.all([
+    const [members, page, settings] = await Promise.all([
       listMembers(),
-      recentMessages(MESSAGES_PER_FETCH),
+      pageMessages(collections.messages(), {}),
       getSettings()
     ]);
     res.json({
       members: members.map(publicMember),
-      messages,
+      messages: page.messages,
+      hasMore: page.hasMore,
       emailEnabled: Boolean(mailer),
       settings
     });
@@ -434,6 +431,51 @@ function createGeneralRouter({ getAIResponse, requireMember, createSession }) {
     }
 
     res.status(201).json({ message });
+  });
+
+  // Older history: the page of messages before ?before=<createdAt>
+  router.get("/messages", requireMember, async (req, res) => {
+    res.json(await pageMessages(collections.messages(), {}, req.query.before));
+  });
+
+  // Edits, deletes and reactions are pushed to everyone right away
+  const announce = (res) => (message) => {
+    bus.emit("general:messageUpdated", message);
+    res.json({ message });
+  };
+
+  router.patch("/messages/:id", requireMember, async (req, res) => {
+    const result = await editMessage(
+      collections.messages(),
+      {},
+      req.params.id,
+      req.member,
+      req.body.text
+    );
+    respond(res, result, announce(res));
+  });
+
+  // Authors delete their own messages; the owner can remove any message
+  router.delete("/messages/:id", requireMember, async (req, res) => {
+    const result = await deleteMessage(
+      collections.messages(),
+      {},
+      req.params.id,
+      req.member,
+      req.member.role === ROLE_OWNER
+    );
+    respond(res, result, announce(res));
+  });
+
+  router.post("/messages/:id/reactions", requireMember, async (req, res) => {
+    const result = await toggleReaction(
+      collections.messages(),
+      {},
+      req.params.id,
+      req.member,
+      req.body.emoji
+    );
+    respond(res, result, announce(res));
   });
 
   return router;

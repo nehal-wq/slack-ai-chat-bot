@@ -4,6 +4,12 @@ import {
 } from "@reduxjs/toolkit";
 import { apiRequest, SESSION_EXPIRED } from "../auth/session";
 import { signOut } from "../general/generalSlice";
+import {
+  mergeLatest,
+  hasOlderThan,
+  prependOlder,
+  replaceMessage
+} from "../messages/mergeMessages";
 
 function apiThunk(type, callApi) {
   return createAsyncThunk(`direct/${type}`, async (arg, { rejectWithValue }) => {
@@ -23,7 +29,7 @@ export const fetchDirectMessages = apiThunk(
   "fetchMessages",
   async ({ otherId }) => {
     const data = await apiRequest(`/dm/${encodeURIComponent(otherId)}/messages`);
-    return { otherId, messages: data.messages };
+    return { otherId, messages: data.messages, hasMore: data.hasMore };
   }
 );
 
@@ -38,6 +44,32 @@ export const sendDirectMessage = apiThunk(
   }
 );
 
+const dmPath = (otherId, rest = "") => `/dm/${encodeURIComponent(otherId)}/messages${rest}`;
+
+// The page of messages before the oldest one loaded in a conversation
+export const fetchOlderDirect = apiThunk("fetchOlder", async ({ otherId, before }) => {
+  const data = await apiRequest(dmPath(otherId, `?before=${encodeURIComponent(before)}`));
+  return { otherId, ...data };
+});
+
+export const editDirectMessage = apiThunk("editMessage", async ({ otherId, id, text }) => {
+  const data = await apiRequest(dmPath(otherId, `/${id}`), { method: "PATCH", body: { text } });
+  return { otherId, message: data.message };
+});
+
+export const deleteDirectMessage = apiThunk("deleteMessage", async ({ otherId, id }) => {
+  const data = await apiRequest(dmPath(otherId, `/${id}`), { method: "DELETE" });
+  return { otherId, message: data.message };
+});
+
+export const reactDirectMessage = apiThunk("react", async ({ otherId, id, emoji }) => {
+  const data = await apiRequest(dmPath(otherId, `/${id}/reactions`), {
+    method: "POST",
+    body: { emoji }
+  });
+  return { otherId, message: data.message };
+});
+
 export const markDirectRead = apiThunk("markRead", async ({ otherId }) => {
   await apiRequest(`/dm/${encodeURIComponent(otherId)}/read`, { method: "POST" });
   return { otherId };
@@ -49,6 +81,8 @@ const initialState = {
   conversations: [],
   messagesByMember: {},
   loadedMembers: {},
+  hasMoreByMember: {},
+  loadingOlderByMember: {},
   error: null
 };
 
@@ -57,6 +91,14 @@ const directSlice = createSlice({
   initialState,
   reducers: {
     // A DM pushed over the realtime connection (sent by either person)
+    // Edited/deleted/reacted copy pushed over the realtime connection
+    directMessageUpdated: (state, action) => {
+      const { message, members, myId } = action.payload;
+      const otherId = members.find((id) => id !== myId);
+      if (otherId && state.messagesByMember[otherId]) {
+        replaceMessage(state.messagesByMember[otherId], message);
+      }
+    },
     directMessageReceived: (state, action) => {
       const { message, members, myId } = action.payload;
       const otherId = members.find((id) => id !== myId);
@@ -83,9 +125,28 @@ const directSlice = createSlice({
       .addCase(fetchConversations.rejected, (state, action) => {
         state.error = action.payload;
       })
+      .addCase(fetchOlderDirect.pending, (state, action) => {
+        state.loadingOlderByMember[action.meta.arg.otherId] = true;
+      })
+      .addCase(fetchOlderDirect.fulfilled, (state, action) => {
+        const { otherId, messages, hasMore } = action.payload;
+        state.loadingOlderByMember[otherId] = false;
+        state.messagesByMember[otherId] = prependOlder(
+          state.messagesByMember[otherId] || [],
+          messages
+        );
+        state.hasMoreByMember[otherId] = hasMore;
+      })
+      .addCase(fetchOlderDirect.rejected, (state, action) => {
+        state.loadingOlderByMember[action.meta.arg.otherId] = false;
+      })
       .addCase(fetchDirectMessages.fulfilled, (state, action) => {
         const { otherId, messages } = action.payload;
-        state.messagesByMember[otherId] = messages;
+        const existing = state.messagesByMember[otherId] || [];
+        if (!hasOlderThan(existing, messages)) {
+          state.hasMoreByMember[otherId] = action.payload.hasMore;
+        }
+        state.messagesByMember[otherId] = mergeLatest(existing, messages);
         state.loadedMembers[otherId] = true;
       })
       .addCase(sendDirectMessage.fulfilled, (state, action) => {
@@ -103,12 +164,24 @@ const directSlice = createSlice({
       // Never show one person's DMs to the next person on this browser
       .addCase(signOut.fulfilled, () => initialState)
       .addMatcher(
+        (action) =>
+          [editDirectMessage, deleteDirectMessage, reactDirectMessage].some((thunk) =>
+            thunk.fulfilled.match(action)
+          ),
+        (state, action) => {
+          const { otherId, message } = action.payload;
+          if (state.messagesByMember[otherId]) {
+            replaceMessage(state.messagesByMember[otherId], message);
+          }
+        }
+      )
+      .addMatcher(
         (action) => action.type.endsWith("/rejected") && action.payload === SESSION_EXPIRED,
         () => initialState
       );
   }
 });
 
-export const { directMessageReceived } = directSlice.actions;
+export const { directMessageReceived, directMessageUpdated } = directSlice.actions;
 
 export default directSlice.reducer;
