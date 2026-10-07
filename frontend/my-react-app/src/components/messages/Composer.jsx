@@ -94,6 +94,9 @@ function Composer({ placeholder, people, extraMentions = [], onSend, onTyping, d
           if (e.key === "Enter" && !e.shiftKey && !mentionListOpen()) {
             e.preventDefault();
             send();
+          } else if (e.key === "Escape" && mentionListOpen()) {
+            // Esc closes the suggestions only, not a drawer around the composer
+            e.stopPropagation();
           }
         }}
         style={{ fontSize: "14px", flex: 1 }}

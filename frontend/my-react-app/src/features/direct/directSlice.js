@@ -102,7 +102,7 @@ const directSlice = createSlice({
     directMessageReceived: (state, action) => {
       const { message, members, myId } = action.payload;
       const otherId = members.find((id) => id !== myId);
-      if (!otherId) return;
+      if (!otherId || message.parentId) return;
 
       const list = state.messagesByMember[otherId];
       if (list && !list.some((m) => m.id === message.id)) list.push(message);

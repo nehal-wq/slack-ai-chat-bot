@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button, Input, Popconfirm, Popover, Tag, Tooltip } from "antd";
-import { DeleteOutlined, EditOutlined, SmileOutlined } from "@ant-design/icons";
+import { CommentOutlined, DeleteOutlined, EditOutlined, SmileOutlined } from "@ant-design/icons";
 import MemberAvatar from "../general/MemberAvatar";
 import formatMessageTime from "../general/formatMessageTime";
 import MessageText from "./MessageText";
@@ -63,7 +63,34 @@ function ReactionPicker({ onPick }) {
   );
 }
 
-// One chat message with hover actions. Used by #general and DMs.
+// "3 replies · Last reply 10:32 AM" under a message that has a thread
+function ThreadSummary({ message, memberOf, onOpen }) {
+  const count = message.replyCount;
+  const repliers = (message.replyMemberIds || []).slice(-3).map(memberOf).filter(Boolean);
+  return (
+    <button
+      type="button"
+      className="thread-summary"
+      onClick={onOpen}
+      aria-label={`View thread, ${count} ${count === 1 ? "reply" : "replies"}`}
+    >
+      {repliers.map((member) => (
+        <MemberAvatar key={member.id} member={member} size={20} />
+      ))}
+      <span className="thread-summary-count">
+        {count} {count === 1 ? "reply" : "replies"}
+      </span>
+      {message.lastReplyAt && (
+        <span className="thread-summary-time">
+          Last reply {formatMessageTime(message.lastReplyAt)}
+        </span>
+      )}
+    </button>
+  );
+}
+
+// One chat message with hover actions. Used by #general, channels, DMs and
+// threads. `onReply` (optional) adds "Reply in thread" and the reply summary.
 function MessageItem({
   message,
   author,
@@ -77,7 +104,9 @@ function MessageItem({
   nameOf,
   onEdit,
   onDelete,
-  onReact
+  onReact,
+  onReply,
+  memberOf = () => null
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -208,6 +237,10 @@ function MessageItem({
             onReact={onReact}
           />
         )}
+
+        {onReply && message.replyCount > 0 && (
+          <ThreadSummary message={message} memberOf={memberOf} onOpen={onReply} />
+        )}
       </div>
 
       {actionsAvailable && (
@@ -244,6 +277,17 @@ function MessageItem({
               <Button type="text" size="small" icon={<SmileOutlined />} aria-label="Add reaction" />
             </Tooltip>
           </Popover>
+          {onReply && (
+            <Tooltip title="Reply in thread">
+              <Button
+                type="text"
+                size="small"
+                icon={<CommentOutlined />}
+                onClick={onReply}
+                aria-label="Reply in thread"
+              />
+            </Tooltip>
+          )}
           {canEdit && (
             <Tooltip title="Edit">
               <Button

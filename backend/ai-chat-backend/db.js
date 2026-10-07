@@ -48,10 +48,12 @@ async function ensureIndexes() {
     collections.messages().createIndex({ id: 1 }, { unique: true }),
     collections.messages().createIndex({ createdAt: 1 }),
     collections.messages().createIndex({ channel: 1, createdAt: 1 }),
+    collections.messages().createIndex({ parentId: 1, createdAt: 1 }, { sparse: true }),
     collections.channels().createIndex({ id: 1 }, { unique: true }),
     collections.channels().createIndex({ name: 1 }, { unique: true }),
     collections.directMessages().createIndex({ id: 1 }, { unique: true }),
     collections.directMessages().createIndex({ conversation: 1, createdAt: 1 }),
+    collections.directMessages().createIndex({ parentId: 1, createdAt: 1 }, { sparse: true }),
     collections.sessions().createIndex({ memberId: 1 }),
     // Unused sign-in links are deleted by MongoDB once they expire
     collections.loginTokens().createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),

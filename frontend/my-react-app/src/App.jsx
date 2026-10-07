@@ -46,6 +46,8 @@ import { fetchChannels } from "./features/channels/channelsSlice";
 import ChannelView from "./components/ChannelView";
 import CreateChannelModal from "./components/channels/CreateChannelModal";
 import BrowseChannelsModal from "./components/channels/BrowseChannelsModal";
+import ThreadPanel from "./components/threads/ThreadPanel";
+import { threadClosed, threadViewKey } from "./features/threads/threadsSlice";
 import { fetchMe, verifyLogin } from "./features/general/generalSlice";
 import { useTheme } from "./theme/themeContext";
 import useRealtimeSync from "./features/realtime/useRealtimeSync";
@@ -246,6 +248,12 @@ function App() {
   }, [dispatch, loginToken, hasSession, authChecked]);
 
   // Picking a channel on a phone closes the sidebar, like Slack's mobile app
+  // A thread belongs to one conversation; leaving it closes the panel
+  const openThread = useSelector((state) => state.threads.open);
+  useEffect(() => {
+    if (openThread && threadViewKey(openThread) !== activeChannel) dispatch(threadClosed());
+  }, [dispatch, openThread, activeChannel]);
+
   const [browseOpen, setBrowseOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -657,8 +665,11 @@ function App() {
           </div>
         </Header>
 
+        <div style={{ display: "flex", minHeight: 0 }}>
         <Content
           style={{
+            flex: 1,
+            minWidth: 0,
             padding: isMobile ? "12px" : "20px 24px",
             display: "flex",
             flexDirection: "column",
@@ -1003,6 +1014,8 @@ function App() {
             </>
           )}
         </Content>
+        <ThreadPanel me={directMe} people={people} isMobile={isMobile} />
+        </div>
       </Layout>
 
       <HuddlePanel huddle={huddle} />

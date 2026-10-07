@@ -16,6 +16,7 @@ import {
   reactDirectMessage
 } from "../features/direct/directSlice";
 import MessageItem from "./messages/MessageItem";
+import { threadOpened } from "../features/threads/threadsSlice";
 import Composer from "./messages/Composer";
 import { directRoomId } from "../features/huddle/useHuddle";
 import MemberAvatar from "./general/MemberAvatar";
@@ -292,6 +293,12 @@ function DirectChannel({ me, other, huddle }) {
               onEdit={(text) => run(editDirectMessage({ ...ids, text }))}
               onDelete={() => run(deleteDirectMessage(ids)).catch(() => {})}
               onReact={(emoji) => run(reactDirectMessage({ ...ids, emoji })).catch(() => {})}
+              memberOf={(id) => (id === me.id ? me : id === other.id ? other : null)}
+              onReply={() =>
+                dispatch(
+                  threadOpened({ kind: "dm", convId: other.id, parentId: message.id, parent: message })
+                )
+              }
             />
           );
         })}

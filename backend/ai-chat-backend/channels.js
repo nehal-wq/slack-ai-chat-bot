@@ -4,6 +4,9 @@ const { collections, NO_MONGO_ID } = require("./db");
 const { bus } = require("./events");
 const {
   pageMessages,
+  listThread,
+  addReply,
+  cleanText,
   editMessage,
   deleteMessage,
   toggleReaction,
@@ -305,6 +308,64 @@ function createChannelsRouter({ requireMember, getAIResponse, replyAsBot }) {
     }
 
     res.status(201).json({ message });
+  });
+
+  // --- Threads ---
+
+  async function addChannelReply(channel, parentId, message) {
+    const result = await addReply(collections.messages(), { channel: channel.id }, parentId, (extra) =>
+      addChannelMessage(channel, { ...message, ...extra })
+    );
+    if (result.parent) {
+      bus.emit("channel:messageUpdated", {
+        channelId: channel.id,
+        message: result.parent,
+        audience: audienceOf(channel)
+      });
+    }
+    return result;
+  }
+
+  router.get("/:id/messages/:messageId/replies", async (req, res) => {
+    const channel = await loadReadable(req, res);
+    if (!channel) return;
+    const result = await listThread(
+      collections.messages(),
+      { channel: channel.id },
+      req.params.messageId
+    );
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  });
+
+  router.post("/:id/messages/:messageId/replies", async (req, res) => {
+    const channel = await loadReadable(req, res);
+    if (!channel) return;
+    if (!isMember(channel, req.member)) {
+      return res.status(403).json({ error: `Join #${channel.name} to reply.` });
+    }
+    const text = cleanText(req.body.text);
+    if (!text) return res.status(400).json({ error: "Message must not be empty." });
+
+    const parentId = req.params.messageId;
+    const result = await addChannelReply(channel, parentId, {
+      type: "user",
+      memberId: req.member.id,
+      author: req.member.name,
+      text
+    });
+    if (result.error) return res.status(result.status).json({ error: result.error });
+
+    if (BOT_MENTION_PATTERN.test(text)) {
+      replyAsBot(getAIResponse, {
+        channelId: channel.id,
+        channelName: channel.name,
+        parentId,
+        post: (botMessage) => addChannelReply(channel, parentId, botMessage)
+      }).catch((error) => console.error("CHANNEL BOT ERROR:", error.message || error));
+    }
+
+    res.status(201).json({ message: result.reply, parent: result.parent });
   });
 
   const announceUpdate = (res, channel) => (message) => {

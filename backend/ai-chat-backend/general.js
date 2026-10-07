@@ -5,6 +5,10 @@ const { collections, NO_MONGO_ID } = require("./db");
 const { bus } = require("./events");
 const {
   pageMessages,
+  listThread,
+  addReply,
+  cleanText,
+  TOP_LEVEL,
   editMessage,
   deleteMessage,
   toggleReaction,
@@ -168,11 +172,16 @@ function escapeHtml(text) {
 
 async function replyAsBot(
   getAIResponse,
-  { channelId = "general", channelName = "general", post = addMessage } = {}
+  { channelId = "general", channelName = "general", post = addMessage, parentId = null } = {}
 ) {
+  // In a thread the bot reads that thread; otherwise the channel's main feed
+  const conversation = parentId ? { $or: [{ id: parentId }, { parentId }] } : TOP_LEVEL;
   const latest = await collections
     .messages()
-    .find({ channel: channelId, type: { $ne: "system" }, deleted: { $ne: true } }, NO_MONGO_ID)
+    .find(
+      { channel: channelId, type: { $ne: "system" }, deleted: { $ne: true }, ...conversation },
+      NO_MONGO_ID
+    )
     .sort({ createdAt: -1 })
     .limit(AI_CONTEXT_LENGTH)
     .toArray();
@@ -438,6 +447,47 @@ function createGeneralRouter({ getAIResponse, requireMember, createSession }) {
     }
 
     res.status(201).json({ message });
+  });
+
+  // --- Threads ---
+
+  // Saves a reply in #general and pushes the parent's new reply count
+  async function addGeneralReply(parentId, message) {
+    const result = await addReply(collections.messages(), GENERAL_SCOPE, parentId, (extra) =>
+      addMessage({ ...message, ...extra })
+    );
+    if (result.parent) bus.emit("general:messageUpdated", result.parent);
+    return result;
+  }
+
+  router.get("/messages/:id/replies", requireMember, async (req, res) => {
+    const result = await listThread(collections.messages(), GENERAL_SCOPE, req.params.id);
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  });
+
+  router.post("/messages/:id/replies", requireMember, async (req, res) => {
+    const text = cleanText(req.body.text);
+    if (!text) return res.status(400).json({ error: "Message must not be empty." });
+
+    const parentId = req.params.id;
+    const result = await addGeneralReply(parentId, {
+      type: "user",
+      memberId: req.member.id,
+      author: req.member.name,
+      text
+    });
+    if (result.error) return res.status(result.status).json({ error: result.error });
+
+    // @ai in a thread answers in that thread
+    if (BOT_MENTION_PATTERN.test(text)) {
+      replyAsBot(getAIResponse, {
+        parentId,
+        post: (botMessage) => addGeneralReply(parentId, botMessage)
+      }).catch((error) => console.error("GENERAL BOT ERROR:", error.message || error));
+    }
+
+    res.status(201).json({ message: result.reply, parent: result.parent });
   });
 
   // Older history: the page of messages before ?before=<createdAt>

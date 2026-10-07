@@ -1,10 +1,15 @@
 const { NO_MONGO_ID } = require("./db");
 
 // Message operations shared by #general (messages collection) and DMs
-// (directMessages, scoped by conversation): paging, edit, delete, reactions.
+// (directMessages, scoped by conversation): paging, edit, delete, reactions,
+// and threads (replies carry `parentId`; the parent keeps a reply summary).
 
 const PAGE_SIZE = 50;
 const MAX_TEXT_LENGTH = 4000;
+const MAX_REPLIES = 500;
+
+// Main feeds show only messages that aren't thread replies
+const TOP_LEVEL = { parentId: { $exists: false } };
 
 // The reaction picker offers these; anything else is rejected
 const REACTIONS = ["👍", "❤️", "😂", "🎉", "😮", "😢", "🙏", "🔥", "✅", "👀"];
@@ -12,7 +17,7 @@ const REACTIONS = ["👍", "❤️", "😂", "🎉", "😮", "😢", "🙏", "�
 // One page of messages in `scope`, oldest first. `before` (an ISO timestamp)
 // loads the page that comes before it; `hasMore` says if older ones exist.
 async function pageMessages(collection, scope, before) {
-  const filter = { ...scope };
+  const filter = { ...scope, ...TOP_LEVEL };
   if (typeof before === "string" && before) filter.createdAt = { $lt: before };
   const newestFirst = await collection
     .find(filter, NO_MONGO_ID)
@@ -97,6 +102,41 @@ async function toggleReaction(collection, scope, messageId, member, emoji) {
   return { message: updated };
 }
 
+function findThreadParent(collection, scope, parentId) {
+  return collection.findOne({ ...scope, ...TOP_LEVEL, id: parentId }, NO_MONGO_ID);
+}
+
+// A message and all its replies, oldest first
+async function listThread(collection, scope, parentId) {
+  const parent = await findThreadParent(collection, scope, parentId);
+  if (!parent || parent.type === "system") return { status: 404, error: "Message not found." };
+  const replies = await collection
+    .find({ ...scope, parentId }, NO_MONGO_ID)
+    .sort({ createdAt: 1 })
+    .limit(MAX_REPLIES)
+    .toArray();
+  return { parent, replies };
+}
+
+// Saves a reply with `insert(extraFields)` (which also pushes it), then
+// updates the parent's summary: reply count, last reply time, who replied.
+// Returns { reply, parent } or { status, error }.
+async function addReply(collection, scope, parentId, insert) {
+  const parent = await findThreadParent(collection, scope, parentId);
+  if (!parent || parent.type === "system" || (parent.deleted && !parent.replyCount)) {
+    return { status: 404, error: "Message not found." };
+  }
+
+  const reply = await insert({ parentId });
+  const summary = { $inc: { replyCount: 1 }, $set: { lastReplyAt: reply.createdAt } };
+  if (reply.memberId) summary.$addToSet = { replyMemberIds: reply.memberId };
+  const updatedParent = await collection.findOneAndUpdate({ ...scope, id: parentId }, summary, {
+    returnDocument: "after",
+    ...NO_MONGO_ID
+  });
+  return { reply, parent: updatedParent };
+}
+
 // Sends { status, error } results as errors, otherwise calls onSuccess
 function respond(res, result, onSuccess) {
   if (result.error) return res.status(result.status).json({ error: result.error });
@@ -106,7 +146,11 @@ function respond(res, result, onSuccess) {
 module.exports = {
   PAGE_SIZE,
   REACTIONS,
+  TOP_LEVEL,
+  cleanText,
   pageMessages,
+  listThread,
+  addReply,
   editMessage,
   deleteMessage,
   toggleReaction,

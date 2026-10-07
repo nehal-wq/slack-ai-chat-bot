@@ -86,6 +86,42 @@ body {
   }
 }
 
+/* "3 replies · Last reply 10:32 AM" under a message with a thread */
+.thread-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 3px 8px 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  max-width: 100%;
+}
+
+.thread-summary:hover,
+.thread-summary:focus-visible {
+  border-color: var(--border);
+  background: var(--surface-subtle);
+}
+
+.thread-summary-count {
+  color: var(--accent);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.thread-summary-time {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Suggested prompts on the #ai-assistant welcome card */
 .prompt-card {
   padding: 12px 14px;

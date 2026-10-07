@@ -113,6 +113,7 @@ const channelsSlice = createSlice({
   initialState,
   reducers: {
     channelMessageReceived: (state, action) => {
+      if (action.payload.message.parentId) return;
       addMessage(state, action.payload.channelId, action.payload.message);
     },
     channelMessageUpdated: (state, action) => {

@@ -12,6 +12,7 @@ import {
   reactChannelMessage
 } from "../features/channels/channelsSlice";
 import MessageItem from "./messages/MessageItem";
+import { threadOpened } from "../features/threads/threadsSlice";
 import Composer from "./messages/Composer";
 import MemberAvatar from "./general/MemberAvatar";
 import formatMessageTime from "./general/formatMessageTime";
@@ -227,6 +228,17 @@ function ChannelView({ channel, me, people, onLeft }) {
               onEdit={(text) => run(editChannelMessage({ ...ids, text }))}
               onDelete={() => run(deleteChannelMessage(ids)).catch(() => {})}
               onReact={(emoji) => run(reactChannelMessage({ ...ids, emoji })).catch(() => {})}
+              memberOf={(id) => byId[id]}
+              onReply={() =>
+                dispatch(
+                  threadOpened({
+                    kind: "channel",
+                    convId: channel.id,
+                    parentId: message.id,
+                    parent: message
+                  })
+                )
+              }
             />
           );
         })}

@@ -4,6 +4,10 @@ const { collections, NO_MONGO_ID } = require("./db");
 const { bus } = require("./events");
 const {
   pageMessages,
+  listThread,
+  addReply,
+  cleanText,
+  TOP_LEVEL,
   editMessage,
   deleteMessage,
   toggleReaction,
@@ -82,9 +86,13 @@ function createDirectRouter({ findJoinedMember, listJoinedMembers, requireMember
           const [lastMessage, unread] = await Promise.all([
             collections
               .directMessages()
-              .findOne({ conversation: key }, { ...NO_MONGO_ID, sort: { createdAt: -1 } }),
+              .findOne(
+                { conversation: key, ...TOP_LEVEL },
+                { ...NO_MONGO_ID, sort: { createdAt: -1 } }
+              ),
             collections.directMessages().countDocuments({
               conversation: key,
+              ...TOP_LEVEL,
               type: "user",
               memberId: { $ne: me.id },
               createdAt: { $gt: lastRead }
@@ -169,6 +177,44 @@ function createDirectRouter({ findJoinedMember, listJoinedMembers, requireMember
     await markRead(pair.key, pair.me.id, message.createdAt);
 
     res.status(201).json({ message });
+  });
+
+  // --- Threads ---
+
+  router.get("/:otherId/messages/:id/replies", async (req, res) => {
+    const pair = await resolvePair(req, res);
+    if (!pair) return;
+    const result = await listThread(
+      collections.directMessages(),
+      { conversation: pair.key },
+      req.params.id
+    );
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  });
+
+  router.post("/:otherId/messages/:id/replies", async (req, res) => {
+    const pair = await resolvePair(req, res);
+    if (!pair) return;
+    const text = cleanText(req.body.text);
+    if (!text) return res.status(400).json({ error: "Message must not be empty." });
+
+    const result = await addReply(
+      collections.directMessages(),
+      { conversation: pair.key },
+      req.params.id,
+      (extra) =>
+        addDirectMessage(pair.me.id, pair.other.id, {
+          type: "user",
+          memberId: pair.me.id,
+          author: pair.me.name,
+          text,
+          ...extra
+        })
+    );
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    bus.emit("dm:messageUpdated", { members: [pair.me.id, pair.other.id], message: result.parent });
+    res.status(201).json({ message: result.reply, parent: result.parent });
   });
 
   router.post("/:otherId/read", async (req, res) => {

@@ -18,6 +18,7 @@ import {
   reactGeneralMessage
 } from "../features/general/generalSlice";
 import MessageItem from "./messages/MessageItem";
+import { threadOpened } from "../features/threads/threadsSlice";
 import Composer from "./messages/Composer";
 import MemberAvatar from "./general/MemberAvatar";
 import { notifyTyping, useTypingNames, typingLabel } from "../features/realtime/useTyping";
@@ -353,6 +354,10 @@ function GeneralChannel({ inviteToken, onInviteHandled, huddle }) {
               onEdit={(text) => run(editGeneralMessage({ id: message.id, text }))}
               onDelete={() => run(deleteGeneralMessage(message.id)).catch(() => {})}
               onReact={(emoji) => run(reactGeneralMessage({ id: message.id, emoji })).catch(() => {})}
+              memberOf={(id) => membersById[id]}
+              onReply={() =>
+                dispatch(threadOpened({ kind: "general", parentId: message.id, parent: message }))
+              }
             />
           );
         })}

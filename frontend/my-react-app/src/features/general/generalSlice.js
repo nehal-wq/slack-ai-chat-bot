@@ -170,6 +170,7 @@ const generalSlice = createSlice({
     },
     generalMessageReceived: (state, action) => {
       const message = action.payload;
+      if (message.parentId) return;
       if (!state.messages.some((m) => m.id === message.id)) {
         state.messages.push(message);
       }
